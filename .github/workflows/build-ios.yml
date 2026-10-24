@@ -55,8 +55,8 @@ jobs:
           # 1. 禁用 Firebase SPM
           sed -i '' '1i\'$'\n''$RNFirebaseDisableSPM = true'$'\n' Podfile
           
-          # 2. 清空会导致 Release 编译崩溃的 expo-dev-menu 调试图标资源
-          find ../../../node_modules -path "*/expo-dev-menu/ios/Assets.xcassets" -exec rm -rf {} + 2>/dev/null || true
+          # 2. 彻底移除会导致 Xcode 16 编译崩溃的 expo-dev-menu 资源包配置
+          find ../../../node_modules -name "expo-dev-menu.podspec" -exec sed -i '' '/resource_bundles/,/}/d' {} +
           
           # 3. 安装 Pods
           pod install --repo-update
