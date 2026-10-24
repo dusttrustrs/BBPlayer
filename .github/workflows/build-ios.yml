@@ -1,0 +1,95 @@
+name: Build Unsigned iOS IPA
+
+on:
+  workflow_dispatch: # 支持在 GitHub 页面手动一键触发构建
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+
+jobs:
+  build-ios:
+    name: Build iOS IPA (Unsigned)
+    runs-on: macos-14 # 使用 macOS 14 (Apple Silicon M1/M2) 虚拟环境
+    timeout-minutes: 60
+
+    steps:
+      - name: 🏗️ 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 获取完整提交历史以便正确计算版本号
+
+      - name: 🟢 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: 📦 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - name: 📥 安装依赖
+        env:
+          LEFTHOOK: "0" # 跳过 Git Hook 安装
+        run: |
+          pnpm install --no-frozen-lockfile
+
+      - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
+        env:
+          APP_VARIANT: production
+          VERSION_CODE: 1
+        run: |
+          cd apps/mobile
+          npx expo prebuild --platform ios --clean --no-install
+
+      - name: 🍎 安装 CocoaPods 依赖
+        run: |
+          cd apps/mobile/ios
+          pod install --repo-update
+
+      - name: 🔨 编译 iOS App (禁用代码签名)
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true" # 禁用 Sentry 上传以防止缺少凭据报错
+        run: |
+          cd apps/mobile/ios
+          xcodebuild build \
+            -workspace BBPlayer.xcworkspace \
+            -scheme BBPlayer \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
+
+      - name: 📦 打包为未签名 .ipa
+        run: |
+          cd apps/mobile/ios
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ 未找到编译生成的 .app 文件"
+            exit 1
+          fi
+          echo "✅ 找到 App 路径: $APP_PATH"
+
+          # 构建标准 Payload 目录结构并打成 zip (ipa)
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -r -y BBPlayer-unsigned.ipa Payload
+
+          mkdir -p "${GITHUB_WORKSPACE}/dist"
+          mv BBPlayer-unsigned.ipa "${GITHUB_WORKSPACE}/dist/"
+
+      - name: 🚀 上传 IPA 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: BBPlayer-iOS-Unsigned
+          path: dist/BBPlayer-unsigned.ipa
+          retention-days: 14
