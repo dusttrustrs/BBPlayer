@@ -52,6 +52,7 @@ jobs:
       - name: 🍎 安装 CocoaPods 依赖
         run: |
           cd apps/mobile/ios
+          sed -i '' '1i\'$'\n''$RNFirebaseDisableSPM = true'$'\n' Podfile
           pod install --repo-update
 
       - name: 🔨 编译 iOS App (禁用代码签名)
