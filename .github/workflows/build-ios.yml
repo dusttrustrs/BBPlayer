@@ -209,10 +209,18 @@ jobs:
               if (setupPattern.test(playerMgr)) {
                 const setupReplacement = [
                   'private var isSimultaneousPlaybackAllowed = false',
+                  '    private var enableSystemMediaControl: Bool = true',
                   '',
                   '    func setAllowSimultaneousPlayback(_ enabled: Bool) {',
                   '        isSimultaneousPlaybackAllowed = enabled',
+                  '        enableSystemMediaControl = !enabled',
                   '        setupAudioSession()',
+                  '        if enabled {',
+                  '            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil',
+                  '            MPNowPlayingInfoCenter.default().playbackState = .stopped',
+                  '        } else {',
+                  '            updateNowPlayingInfo()',
+                  '        }',
                   '    }',
                   '',
                   '    private func setupAudioSession() {',
@@ -403,7 +411,7 @@ jobs:
             }
           }
 
-          // 3. 修复 WavySlider 在 iOS 端的缺失崩溃问题 (WavySlider is only implemented on Android)
+          // 3. 修复 WavySlider 在 iOS 端的平滑拖动与原生触控 (彻底消除卡顿、跳跃与回弹)：
           const wavyPath = "packages/expo-wavy-slider/src/WavySlider.ts";
           if (fs.existsSync(wavyPath)) {
             let wavy = fs.readFileSync(wavyPath, "utf8");
@@ -444,102 +452,164 @@ jobs:
                 "    trackThickness = 4,",
                 "  } = props",
                 "  const [sliderWidth, setSliderWidth] = useState(0)",
-                "  const isDragging = useRef(false)",
+                "  const isDraggingShared = useSharedValue(false)",
                 "  const localProgress = useSharedValue(value)",
-                "",
+                "  const thumbScale = useSharedValue(1)",
+                "  const startTouchXRef = useRef(0)",
+                "  const sliderWidthRef = useRef(0)",
+
+                "  const handleLayout = (e: any) => {",
+                "    const w = e.nativeEvent.layout.width",
+                "    setSliderWidth(w)",
+                "    sliderWidthRef.current = w",
+                "  }",
+
                 "  useAnimatedReaction(",
-                "    () => (progress && typeof progress === 'object' && 'value' in progress ? (progress as SharedValue<number>).value : value),",
+                "    () => {",
+                "      'worklet'",
+                "      if (progress && typeof progress === 'object' && 'value' in progress) {",
+                "        return (progress as SharedValue<number>).value",
+                "      }",
+                "      return value",
+                "    },",
                 "    (current) => {",
-                "      if (!isDragging.current) {",
+                "      'worklet'",
+                "      if (!isDraggingShared.value) {",
                 "        localProgress.value = current",
                 "      }",
                 "    }",
                 "  )",
-                "",
+
                 "  const activeColor = (colors?.activeTrackColor as string) || '#a855f7'",
                 "  const inactiveColor = (colors?.inactiveTrackColor as string) || 'rgba(150, 150, 150, 0.3)'",
                 "  const thumbColor = (colors?.thumbColor as string) || activeColor",
-                "",
+
                 "  const panResponder = useMemo(",
                 "    () =>",
                 "      PanResponder.create({",
                 "        onStartShouldSetPanResponder: () => enabled,",
-                "        onMoveShouldSetPanResponder: () => enabled,",
+                "        onMoveShouldSetPanResponder: (_, gestureState) => {",
+                "          return enabled && (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) < 15)",
+                "        },",
                 "        onPanResponderGrant: (evt) => {",
-                "          isDragging.current = true",
+                "          isDraggingShared.value = true",
+                "          thumbScale.value = withTiming(1.25, { duration: 150 })",
                 "          onDragStateChange?.(true)",
-                "          const locationX = evt.nativeEvent.locationX",
-                "          const fraction = Math.max(0, Math.min(1, locationX / (sliderWidth || 1)))",
+                "          const width = sliderWidthRef.current || 1",
+                "          const locationX = Math.max(0, Math.min(width, evt.nativeEvent.locationX))",
+                "          startTouchXRef.current = locationX",
+                "          const fraction = locationX / width",
                 "          const actualVal = min + fraction * (max - min)",
                 "          localProgress.value = actualVal",
                 "          onValueChange?.(actualVal)",
                 "        },",
-                "        onPanResponderMove: (evt) => {",
-                "          const locationX = evt.nativeEvent.locationX",
-                "          const fraction = Math.max(0, Math.min(1, locationX / (sliderWidth || 1)))",
+                "        onPanResponderMove: (_, gestureState) => {",
+                "          const width = sliderWidthRef.current || 1",
+                "          const currentX = Math.max(0, Math.min(width, startTouchXRef.current + gestureState.dx))",
+                "          const fraction = currentX / width",
                 "          const actualVal = min + fraction * (max - min)",
                 "          localProgress.value = actualVal",
                 "          onValueChange?.(actualVal)",
                 "        },",
                 "        onPanResponderRelease: () => {",
-                "          isDragging.current = false",
+                "          thumbScale.value = withTiming(1, { duration: 150 })",
                 "          onDragStateChange?.(false)",
                 "          onValueChangeFinished?.(localProgress.value)",
+                "          setTimeout(() => {",
+                "            isDraggingShared.value = false",
+                "          }, 300)",
+                "        },",
+                "        onPanResponderTerminate: () => {",
+                "          thumbScale.value = withTiming(1, { duration: 150 })",
+                "          onDragStateChange?.(false)",
+                "          setTimeout(() => {",
+                "            isDraggingShared.value = false",
+                "          }, 300)",
                 "        },",
                 "      }),",
-                "    [enabled, sliderWidth, min, max, onValueChange, onValueChangeFinished, onDragStateChange]",
+                "    [enabled, min, max, onValueChange, onValueChangeFinished, onDragStateChange]",
                 "  )",
-                "",
+
                 "  const activeTrackStyle = useAnimatedStyle(() => {",
+                "    'worklet'",
                 "    const fraction = (localProgress.value - min) / (max - min || 1)",
                 "    const clamped = Math.max(0, Math.min(1, fraction))",
                 "    return { width: clamped * 100 + '%' }",
                 "  })",
-                "",
+
                 "  const thumbStyle = useAnimatedStyle(() => {",
+                "    'worklet'",
                 "    const fraction = (localProgress.value - min) / (max - min || 1)",
                 "    const clamped = Math.max(0, Math.min(1, fraction))",
                 "    const left = clamped * (sliderWidth || 0)",
-                "    return { transform: [{ translateX: left - 7 }] }",
+                "    return {",
+                "      transform: [",
+                "        { translateX: left - 7 },",
+                "        { scale: thumbScale.value }",
+                "      ]",
+                "    }",
                 "  })",
-                "",
+
                 "  const thickness = typeof trackThickness === 'number' ? trackThickness : 4",
-                "",
+
                 "  return createElement(",
                 "    View,",
                 "    {",
                 "      style: [iosSliderStyles.container, style],",
-                "      onLayout: (e: any) => setSliderWidth(e.nativeEvent.layout.width),",
+                "      onLayout: handleLayout,",
+                "      hitSlop: { top: 15, bottom: 15, left: 10, right: 10 },",
                 "      ...panResponder.panHandlers,",
                 "    },",
                 "    createElement(",
                 "      View,",
-                "      { style: [iosSliderStyles.track, { height: thickness, backgroundColor: inactiveColor }] },",
+                "      {",
+                "        pointerEvents: 'none',",
+                "        style: [iosSliderStyles.track, { height: thickness, backgroundColor: inactiveColor }],",
+                "      },",
                 "      createElement(Animated.View, {",
+                "        pointerEvents: 'none',",
                 "        style: [iosSliderStyles.activeTrack, { height: thickness, backgroundColor: activeColor }, activeTrackStyle],",
                 "      })",
                 "    ),",
                 "    createElement(Animated.View, {",
+                "      pointerEvents: 'none',",
                 "      style: [iosSliderStyles.thumb, { backgroundColor: thumbColor }, thumbStyle],",
                 "    })",
                 "  )",
                 "}",
-                "",
+
                 "const iosSliderStyles = StyleSheet.create({",
-                "  container: { height: 30, justifyContent: 'center' },",
+                "  container: { height: 32, justifyContent: 'center' },",
                 "  track: { width: '100%', borderRadius: 2, overflow: 'hidden' },",
-                "  activeTrack: { position: 'absolute', left: 0, top: 0, borderRadius: 2 },",
-                "  thumb: { position: 'absolute', top: '50%', marginTop: -7, left: 0, width: 14, height: 14, borderRadius: 7 },",
+                "  activeTrack: { position: \'absolute\', left: 0, top: 0, borderRadius: 2 },",
+                "  thumb: {",
+                "    position: 'absolute',",
+                "    top: '50%',",
+                "    marginTop: -7,",
+                "    left: 0,",
+                "    width: 14,",
+                "    height: 14,",
+                "    borderRadius: 7,",
+                "    shadowColor: '#000',",
+                "    shadowOffset: { width: 0, height: 1 },",
+                "    shadowOpacity: 0.3,",
+                "    shadowRadius: 2,",
+                "  },",
                 "})"
               ].join("\n");
 
               wavy = wavy.replace(
                 "import { requireNativeView } from 'expo'",
-                "import { requireNativeView } from 'expo'\nimport { useState, useRef, useMemo } from 'react'\nimport { PanResponder, StyleSheet, View } from 'react-native'\nimport Animated, { useAnimatedStyle, useSharedValue, useAnimatedReaction, type SharedValue } from 'react-native-reanimated'"
+                [
+                  "import { requireNativeView } from 'expo'",
+                  "import { useState, useRef, useMemo } from 'react'",
+                  "import { PanResponder, StyleSheet, View } from 'react-native'",
+                  "import Animated, { useAnimatedStyle, useSharedValue, useAnimatedReaction, withTiming, type SharedValue } from 'react-native-reanimated'"
+                ].join("\n")
               );
               wavy = wavy.replace(wavyPattern, wavyReplacement) + "\n" + fallbackCode;
               fs.writeFileSync(wavyPath, wavy, "utf8");
-              console.log("✅ 已成功为 WavySlider 注入 iOS 专用的平滑触控滑动条 Fallback");
+              console.log("✅ 已成功为 WavySlider 注入 iOS 专用的高帧率平滑触控滑动条 Fallback");
             }
           }
 
@@ -938,11 +1008,12 @@ jobs:
             console.warn("⚠️ @expo/ui colors 防御修补警告:", e.message);
           }
 
-          // 11. 开启 iOS 灵动岛系统动画与后台控制联动：
+          // 11. 开启 iOS 灵动岛系统动画、后台控制与音频中断互斥联动：
           // (a) 在主线程调用 UIApplication.shared.beginReceivingRemoteControlEvents() 注册系统控制权；
           // (b) 每次播放状态变化时，显式同步 MPNowPlayingInfoCenter.default().playbackState (.playing / .paused)，
           //     使 SpringBoard 识别前台 App 为活跃音频源，在向上滑动返回桌面时触发“飞入灵动岛”系统级流体动画；
-          // (c) 在 play()、pause() 和 loadAvPlayerItem 中保持音频会话激活与实时更新状态。
+          // (c) 在 play()、pause() 和 loadAvPlayerItem 中保持音频会话激活与实时更新状态；
+          // (d) 在其他应用播放音频时互斥暂停，关闭联动时保留混音后台播放。
           const playerMgrPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
           if (fs.existsSync(playerMgrPath)) {
             let playerMgr = fs.readFileSync(playerMgrPath, "utf8");
@@ -957,18 +1028,87 @@ jobs:
                 ].join("\n")
               );
             }
-            if (!playerMgr.includes("MPNowPlayingInfoCenter.default().playbackState")) {
-              playerMgr = playerMgr.replace(
-                [
-                  "MPNowPlayingInfoCenter.default().nowPlayingInfo = info",
-                  "    }"
-                ].join("\n"),
-                [
-                  "MPNowPlayingInfoCenter.default().nowPlayingInfo = info",
-                  "        MPNowPlayingInfoCenter.default().playbackState = (self.player.timeControlStatus == .playing || self.player.rate > 0) ? .playing : .paused",
-                  "    }"
-                ].join("\n")
-              );
+            const handleInterruptionRegex = /@objc private func handleInterruption\(notification: Notification\) \{[\s\S]*?type == \.began[\s\S]*?pause\(\)[\s\S]*?play\(\)[\s\S]*?\}\s*?\}/;
+            if (handleInterruptionRegex.test(playerMgr)) {
+              playerMgr = playerMgr.replace(handleInterruptionRegex, [
+                "@objc private func handleInterruption(notification: Notification) {",
+                "        if isSimultaneousPlaybackAllowed {",
+                "            return",
+                "        }",
+                "        guard let userInfo = notification.userInfo,",
+                "              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,",
+                "              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }",
+                "        ",
+                "        if type == .began {",
+                "            DispatchQueue.main.async { [weak self] in",
+                "                self?.pause()",
+                "            }",
+                "        } else if type == .ended {",
+                "            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {",
+                "                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)",
+                "                if options.contains(.shouldResume) {",
+                "                    DispatchQueue.main.async { [weak self] in",
+                "                        self?.play()",
+                "                    }",
+                "                }",
+                "            }",
+                "        }",
+                "    }"
+              ].join("\n"));
+            }
+            const updateNowPlayingRegex = /private func updateNowPlayingInfo\(\) \{[\s\S]*?MPNowPlayingInfoCenter\.default\(\)\.nowPlayingInfo = info[\s\S]*?\}/;
+            if (updateNowPlayingRegex.test(playerMgr)) {
+              playerMgr = playerMgr.replace(updateNowPlayingRegex, [
+                "private func updateNowPlayingInfo() {",
+                "        guard enableSystemMediaControl && !isSimultaneousPlaybackAllowed else {",
+                "            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil",
+                "            MPNowPlayingInfoCenter.default().playbackState = .stopped",
+                "            return",
+                "        }",
+                "        guard let track = getCurrentTrack() else {",
+                "            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil",
+                "            MPNowPlayingInfoCenter.default().playbackState = .stopped",
+                "            return",
+                "        }",
+                "        ",
+                "        var info: [String: Any] = [",
+                "            MPMediaItemPropertyTitle: track.title ?? \"Unknown Title\",",
+                "            MPMediaItemPropertyArtist: track.artist ?? \"Unknown Artist\",",
+                "            MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime().seconds,",
+                "            MPNowPlayingInfoPropertyPlaybackRate: player.rate,",
+                "            MPNowPlayingInfoPropertyPlaybackQueueIndex: queueManager.getCurrentIndex(),",
+                "            MPNowPlayingInfoPropertyPlaybackQueueCount: queueManager.getQueueCount()",
+                "        ]",
+                "        ",
+                "        if let duration = track.duration {",
+                "             info[MPMediaItemPropertyPlaybackDuration] = duration",
+                "        } else if let playerDuration = player.currentItem?.duration.seconds, !playerDuration.isNaN {",
+                "             info[MPMediaItemPropertyPlaybackDuration] = playerDuration",
+                "        }",
+                "        ",
+                "        if let artworkUrlStr = track.artwork, let artworkUrl = URL(string: artworkUrlStr) {",
+                "            downloadImage(url: artworkUrl) { [weak self] image in",
+                "                guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return }",
+                "                guard let image = image else { return }",
+                "                if var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo {",
+                "                    if currentInfo[MPMediaItemPropertyTitle] as? String == track.title {",
+                "                         let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }",
+                "                         currentInfo[MPMediaItemPropertyArtwork] = artwork",
+                "                         MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo",
+                "                    }",
+                "                } else {",
+                "                    info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }",
+                "                    MPNowPlayingInfoCenter.default().nowPlayingInfo = info",
+                "                }",
+                "            }",
+                "        }",
+                "        ",
+                "        MPNowPlayingInfoCenter.default().nowPlayingInfo = info",
+                "        MPNowPlayingInfoCenter.default().playbackState = (self.player.timeControlStatus == .playing || self.player.rate > 0) ? .playing : .paused",
+                "    }"
+              ].join("\n"));
+            }
+            if (!playerMgr.includes("MPNowPlayingInfoCenter.default().playbackState = .paused")) {
               playerMgr = playerMgr.replace(
                 [
                   "player.play()",
@@ -984,7 +1124,9 @@ jobs:
                   "    ",
                   "    func pause() {",
                   "        player.pause()",
-                  "        MPNowPlayingInfoCenter.default().playbackState = .paused",
+                  "        if enableSystemMediaControl && !isSimultaneousPlaybackAllowed {",
+                  "            MPNowPlayingInfoCenter.default().playbackState = .paused",
+                  "        }",
                   "        updateNowPlayingInfo()"
                 ].join("\n")
               );
@@ -993,19 +1135,6 @@ jobs:
                 [
                   "setupAudioSession()",
                   "        player.replaceCurrentItem(with: item)"
-                ].join("\n")
-              );
-              playerMgr = playerMgr.replace(
-                [
-                  "player.play()",
-                  "        ",
-                  "",
-                  "    }"
-                ].join("\n"),
-                [
-                  "player.play()",
-                  "        updateNowPlayingInfo()",
-                  "    }"
                 ].join("\n")
               );
             }
@@ -1256,17 +1385,14 @@ jobs:
             console.log("✅ 已配置 app.config.ts updateManifestUrl");
           }
 
-          // 16. 修复歌曲播放界面“定时关闭”弹窗尺寸过大与键盘无法收起的问题：
-          // (a) 将 15/30/45/60 分钟预设恢复为 compact 精简单行排列，避免大网格撑满屏幕；
-          // (b) 引入 TouchableWithoutFeedback 与 Keyboard.dismiss，点击空白处自动收起键盘；
-          // (c) 自定义分钟输入框提供“设置”与“收起”快捷按钮，并支持 returnKeyType='done'。
+          // 16. 修复歌曲播放界面“定时关闭”弹窗尺寸过大与预设选项未显示的问题：
           const sleepModalPath = "apps/mobile/src/components/modals/player/SleepTimerModal.tsx";
           if (fs.existsSync(sleepModalPath)) {
             const sleepModalCode = [
               'import { Orpheus } from "@bbplayer/orpheus"',
               'import { useEffect, useState } from "react"',
-              'import { Keyboard, StyleSheet, TouchableWithoutFeedback, View } from "react-native"',
-              'import { Dialog, Text, TextInput } from "react-native-paper"',
+              'import { Keyboard, Pressable, StyleSheet, TouchableWithoutFeedback, View } from "react-native"',
+              'import { Dialog, Text, TextInput, useTheme } from "react-native-paper"',
               '',
               'import Button from "@/components/common/Button"',
               'import { useSleepTimerEndTime } from "@/hooks/queries/orpheus"',
@@ -1278,6 +1404,7 @@ jobs:
               'const PRESET_DURATIONS = [15, 30, 45, 60]',
               '',
               'const SleepTimerModal = () => {',
+              '    const theme = useTheme()',
               '    const close = useModalStore((state) => state.close)',
               '    const { data: sleepTimerEndAt } = useSleepTimerEndTime()',
               '    const [remainingTime, setRemainingTime] = useState<number | null>(null)',
@@ -1339,36 +1466,56 @@ jobs:
               '                    ) : (',
               '                        <Text style={styles.promptText}>选择预设时间或自定义</Text>',
               '                    )}',
-              '                    <View style={styles.presetContainer}>',
+              '                    <View style={styles.presetGrid}>',
               '                        {PRESET_DURATIONS.map((minutes) => (',
-              '                            <Button',
+              '                            <Pressable',
               '                                key={minutes}',
-              '                                mode="contained-tonal"',
-              '                                compact',
-              '                                onPress={() => handleSetTimer(minutes)}',
-              '                                style={styles.presetButton}',
-              '                                labelStyle={styles.presetLabel}',
+              '                                onPress={() => void handleSetTimer(minutes)}',
+              '                                style={({ pressed }) => [',
+              '                                    styles.presetButton,',
+              '                                    {',
+              '                                        backgroundColor: pressed',
+              '                                            ? theme.colors.primary',
+              '                                            : (theme.colors.secondaryContainer ||',
+              '                                                theme.colors.surfaceVariant),',
+              '                                    },',
+              '                                ]}',
               '                            >',
-              '                                {minutes}分',
-              '                            </Button>',
+              '                                <Text',
+              '                                    style={[',
+              '                                        styles.presetText,',
+              '                                        {',
+              '                                            color:',
+              '                                                theme.colors.onSecondaryContainer ||',
+              '                                                theme.colors.onSurfaceVariant,',
+              '                                        },',
+              '                                    ]}',
+              '                                >',
+              '                                    {minutes} 分钟',
+              '                                </Text>',
+              '                            </Pressable>',
               '                        ))}',
               '                    </View>',
               '                    {customInputVisible ? (',
               '                        <View style={styles.customInputContainer}>',
               '                            <TextInput',
-              '                                label="分钟"',
+              '                                label="自定义分钟数"',
               '                                value={customMinutes}',
               '                                onChangeText={setCustomMinutes}',
               '                                keyboardType="number-pad"',
               '                                returnKeyType="done"',
-              '                                onSubmitEditing={Keyboard.dismiss}',
+              '                                onSubmitEditing={() => {',
+              '                                    const minutes = parseInt(customMinutes, 10)',
+              '                                    if (!isNaN(minutes) && minutes > 0) {',
+              '                                        void handleSetTimer(minutes)',
+              '                                    }',
+              '                                }}',
               '                                autoFocus',
               '                                mode="outlined"',
               '                                style={styles.customInput}',
               '                            />',
               '                            <Button',
               '                                mode="contained"',
-              '                                compact',
               '                                style={styles.actionBtn}',
               '                                onPress={async () => {',
               '                                    const minutes = parseInt(customMinutes, 10)',
@@ -1381,20 +1528,19 @@ jobs:
               '                            </Button>',
               '                            <Button',
               '                                mode="text"',
-              '                                compact',
               '                                onPress={() => {',
               '                                    Keyboard.dismiss()',
               '                                    setCustomInputVisible(false)',
               '                                }}',
               '                            >',
-              '                                收起',
+              '                                取消',
               '                            </Button>',
               '                        </View>',
               '                    ) : (',
               '                        <Button',
               '                            mode="text"',
-              '                            compact',
               '                            onPress={() => setCustomInputVisible(true)}',
+              '                            style={styles.customToggleBtn}',
               '                        >',
               '                            自定义时间',
               '                        </Button>',
@@ -1404,12 +1550,19 @@ jobs:
               '                    {sleepTimerEndAt && (',
               '                        <Button',
               '                            onPress={handleCancelTimer}',
-              '                            textColor="red"',
+              '                            textColor={theme.colors.error || "red"}',
               '                        >',
               '                            取消定时器',
               '                        </Button>',
               '                    )}',
-              '                    <Button onPress={() => { Keyboard.dismiss(); close("SleepTimer"); }}>关闭</Button>',
+              '                    <Button',
+              '                        onPress={() => {',
+              '                            Keyboard.dismiss()',
+              '                            close("SleepTimer")',
+              '                        }}',
+              '                    >',
+              '                        关闭',
+              '                    </Button>',
               '                </Dialog.Actions>',
               '            </View>',
               '        </TouchableWithoutFeedback>',
@@ -1423,42 +1576,537 @@ jobs:
               '    },',
               '    promptText: {',
               '        textAlign: "center",',
-              '        marginBottom: 12,',
+              '        marginBottom: 10,',
               '    },',
-              '    presetContainer: {',
+              '    presetGrid: {',
               '        flexDirection: "row",',
+              '        flexWrap: "wrap",',
               '        justifyContent: "space-between",',
-              '        gap: 6,',
+              '        gap: 10,',
               '        marginBottom: 12,',
               '    },',
               '    presetButton: {',
-              '        flex: 1,',
-              '        minWidth: 0,',
+              '        width: "48%",',
+              '        height: 44,',
+              '        borderRadius: 12,',
+              '        alignItems: "center",',
+              '        justifyContent: "center",',
               '    },',
-              '    presetLabel: {',
-              '        marginHorizontal: 4,',
-              '        marginVertical: 6,',
-              '        fontSize: 13,',
+              '    presetText: {',
+              '        fontSize: 15,',
+              '        fontWeight: "600",',
               '    },',
               '    customInputContainer: {',
               '        flexDirection: "row",',
               '        alignItems: "center",',
               '        gap: 6,',
-              '        marginTop: 4,',
+              '        marginTop: 6,',
               '    },',
               '    customInput: {',
               '        flex: 1,',
-              '        height: 40,',
+              '        height: 44,',
               '    },',
               '    actionBtn: {',
               '        marginLeft: 4,',
+              '    },',
+              '    customToggleBtn: {',
+              '        marginTop: 4,',
+              '        alignSelf: "center",',
               '    },',
               '})',
               '',
               'export default SleepTimerModal'
             ].join("\n");
             fs.writeFileSync(sleepModalPath, sleepModalCode, "utf8");
-            console.log("✅ 已成功重构 SleepTimerModal.tsx 定时关闭弹窗尺寸与键盘响应");
+            console.log("✅ 已成功重构 SleepTimerModal.tsx 定时关闭弹窗尺寸与 15/30/45/60 分钟预设布局");
+          }
+
+
+          // 17. 为单曲点击与选项交互添加类似 Flutter 光晕从中间往两边扩散的微动效：
+          const localItemPath = "apps/mobile/src/features/playlist/local/components/LocalPlaylistItem.tsx";
+          if (fs.existsSync(localItemPath)) {
+            let localItem = fs.readFileSync(localItemPath, "utf8");
+            if (!localItem.includes("triggerHalo")) {
+              localItem = localItem.replace(
+                "import { Easing, StyleSheet, useColorScheme, View } from 'react-native'",
+                "import { Easing as RNEasing, StyleSheet, useColorScheme, View } from 'react-native'\nimport Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated'"
+              );
+              localItem = localItem.replace(
+                "const dragPan = usePanGesture({",
+                [
+                  "const haloScaleX = useSharedValue(0.1)",
+                  "  const haloScaleY = useSharedValue(0.4)",
+                  "  const haloOpacity = useSharedValue(0)",
+                  "",
+                  "  const triggerHalo = useCallback(() => {",
+                  "    haloScaleX.value = 0.1",
+                  "    haloScaleY.value = 0.4",
+                  "    haloOpacity.value = 0.3",
+                  "    haloScaleX.value = withTiming(1.3, { duration: 380, easing: Easing.out(Easing.cubic) })",
+                  "    haloScaleY.value = withTiming(1.0, { duration: 380, easing: Easing.out(Easing.cubic) })",
+                  "    haloOpacity.value = withTiming(0, { duration: 420, easing: Easing.out(Easing.quad) })",
+                  "  }, [haloOpacity, haloScaleX, haloScaleY])",
+                  "",
+                  "  const haloStyle = useAnimatedStyle(() => ({",
+                  "    transform: [{ scaleX: haloScaleX.value }, { scaleY: haloScaleY.value }],",
+                  "    opacity: haloOpacity.value,",
+                  "  }))",
+                  "",
+                  "  const dragPan = usePanGesture({"
+                ].join("\n")
+              );
+              localItem = localItem.replace(
+                "onPress={() => {",
+                "onPress={() => {\n          triggerHalo()"
+              );
+              localItem = localItem.replace(
+                "<View style={styles.itemContainer}>",
+                [
+                  "<Animated.View",
+                  "          pointerEvents='none'",
+                  "          style={[",
+                  "            StyleSheet.absoluteFillObject,",
+                  "            {",
+                  "              backgroundColor: theme.colors.primary,",
+                  "              borderRadius: LIST_ITEM_BORDER_RADIUS,",
+                  "            },",
+                  "            haloStyle,",
+                  "          ]}",
+                  "        />",
+                  "        <View style={styles.itemContainer}>"
+                ].join("\n")
+              );
+              fs.writeFileSync(localItemPath, localItem, "utf8");
+              console.log("✅ 已为 LocalPlaylistItem.tsx 添加 Flutter 风格单曲点击光晕扩散动效");
+            }
+          }
+
+          const remoteItemPath = "apps/mobile/src/features/playlist/remote/components/PlaylistItem.tsx";
+          if (fs.existsSync(remoteItemPath)) {
+            let remoteItem = fs.readFileSync(remoteItemPath, "utf8");
+            if (!remoteItem.includes("triggerHalo")) {
+              remoteItem = remoteItem.replace(
+                "import { StyleSheet, View } from 'react-native'",
+                "import { StyleSheet, View } from 'react-native'\nimport Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated'"
+              );
+              remoteItem = remoteItem.replace(
+                "const onPress = useCallback(() => {\n\t\tif (disabled) return\n\t\tplayTrack(data)\n\t}, [data, disabled, playTrack])",
+                [
+                  "const haloScaleX = useSharedValue(0.1)",
+                  "  const haloScaleY = useSharedValue(0.4)",
+                  "  const haloOpacity = useSharedValue(0)",
+                  "",
+                  "  const triggerHalo = useCallback(() => {",
+                  "    haloScaleX.value = 0.1",
+                  "    haloScaleY.value = 0.4",
+                  "    haloOpacity.value = 0.3",
+                  "    haloScaleX.value = withTiming(1.3, { duration: 380, easing: Easing.out(Easing.cubic) })",
+                  "    haloScaleY.value = withTiming(1.0, { duration: 380, easing: Easing.out(Easing.cubic) })",
+                  "    haloOpacity.value = withTiming(0, { duration: 420, easing: Easing.out(Easing.quad) })",
+                  "  }, [haloOpacity, haloScaleX, haloScaleY])",
+                  "",
+                  "  const haloStyle = useAnimatedStyle(() => ({",
+                  "    transform: [{ scaleX: haloScaleX.value }, { scaleY: haloScaleY.value }],",
+                  "    opacity: haloOpacity.value,",
+                  "  }))",
+                  "",
+                  "  const onPress = useCallback(() => {",
+                  "    if (disabled) return",
+                  "    triggerHalo()",
+                  "    playTrack(data)",
+                  "  }, [data, disabled, playTrack, triggerHalo])"
+                ].join("\n")
+              );
+              remoteItem = remoteItem.replace(
+                "<View style={styles.itemContainer}>",
+                [
+                  "<Animated.View",
+                  "          pointerEvents='none'",
+                  "          style={[",
+                  "            StyleSheet.absoluteFillObject,",
+                  "            {",
+                  "              backgroundColor: colors.primary,",
+                  "              borderRadius: LIST_ITEM_BORDER_RADIUS,",
+                  "            },",
+                  "            haloStyle,",
+                  "          ]}",
+                  "        />",
+                  "        <View style={styles.itemContainer}>"
+                ].join("\n")
+              );
+              fs.writeFileSync(remoteItemPath, remoteItem, "utf8");
+              console.log("✅ 已为 PlaylistItem.tsx 添加 Flutter 风格单曲点击光晕扩散动效");
+            }
+          }
+
+          const btnPath = "apps/mobile/src/components/common/Button.tsx";
+          if (fs.existsSync(btnPath)) {
+            let btnCode = fs.readFileSync(btnPath, "utf8");
+            if (!btnCode.includes("triggerHalo")) {
+              btnCode = btnCode.replace(
+                "import { StyleSheet, View } from 'react-native'",
+                "import { StyleSheet, View } from 'react-native'\nimport Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated'"
+              );
+              btnCode = btnCode.replace(
+                "onPress={onPress}",
+                "onPress={(e) => {\n\t\t\t\t\ttriggerHalo()\n\t\t\t\t\tonPress?.(e)\n\t\t\t\t}}"
+              );
+              btnCode = btnCode.replace(
+                "const borderRadius = theme.roundness * 5",
+                [
+                  "const borderRadius = theme.roundness * 5",
+                  "    const haloScaleX = useSharedValue(0.1)",
+                  "    const haloScaleY = useSharedValue(0.4)",
+                  "    const haloOpacity = useSharedValue(0)",
+                  "",
+                  "    const triggerHalo = () => {",
+                  "      haloScaleX.value = 0.1",
+                  "      haloScaleY.value = 0.4",
+                  "      haloOpacity.value = 0.25",
+                  "      haloScaleX.value = withTiming(1.3, { duration: 350, easing: Easing.out(Easing.cubic) })",
+                  "      haloScaleY.value = withTiming(1.0, { duration: 350, easing: Easing.out(Easing.cubic) })",
+                  "      haloOpacity.value = withTiming(0, { duration: 380, easing: Easing.out(Easing.quad) })",
+                  "    }",
+                  "",
+                  "    const haloStyle = useAnimatedStyle(() => ({",
+                  "      transform: [{ scaleX: haloScaleX.value }, { scaleY: haloScaleY.value }],",
+                  "      opacity: haloOpacity.value,",
+                  "    }))"
+                ].join("\n")
+              );
+              btnCode = btnCode.replace(
+                "<View style={[styles.content]}>",
+                [
+                  "<Animated.View",
+                  "            pointerEvents='none'",
+                  "            style={[",
+                  "              StyleSheet.absoluteFillObject,",
+                  "              {",
+                  "                backgroundColor: textColor,",
+                  "                borderRadius,",
+                  "              },",
+                  "              haloStyle,",
+                  "            ]}",
+                  "          />",
+                  "          <View style={[styles.content]}>"
+                ].join("\n")
+              );
+              fs.writeFileSync(btnPath, btnCode, "utf8");
+              console.log("✅ 已为 Button.tsx 选项与按钮添加点击光晕扩散动效");
+            }
+          }
+
+          // 18. 在「我的-设置-播放」中添加「点击单曲时直接进入播放界面」与「系统控制中心与灵动岛联动（独占播放）」选项（默认均开启）：
+          const appStoreTypesPath = "apps/mobile/src/types/core/appStore.ts";
+          if (fs.existsSync(appStoreTypesPath)) {
+            let appStoreTypes = fs.readFileSync(appStoreTypesPath, "utf8");
+            if (!appStoreTypes.includes("openPlayerOnTrackPress")) {
+              appStoreTypes = appStoreTypes.replace(
+                "hideStarPrompt: boolean",
+                "hideStarPrompt: boolean\n\topenPlayerOnTrackPress?: boolean\n\tenableSystemMediaControl?: boolean"
+              );
+              fs.writeFileSync(appStoreTypesPath, appStoreTypes, "utf8");
+              console.log("✅ 已在 appStore.ts 中声明 openPlayerOnTrackPress 与 enableSystemMediaControl 配置项");
+            }
+          }
+
+          const useAppStorePath = "apps/mobile/src/hooks/stores/useAppStore.ts";
+          if (fs.existsSync(useAppStorePath)) {
+            let useAppStoreCode = fs.readFileSync(useAppStorePath, "utf8");
+            if (!useAppStoreCode.includes("openPlayerOnTrackPress:")) {
+              useAppStoreCode = useAppStoreCode.replace(
+                "hideStarPrompt: false,",
+                "hideStarPrompt: false,\n\t\t\t\t\topenPlayerOnTrackPress: true,\n\t\t\t\t\tenableSystemMediaControl: true,"
+              );
+            }
+            if (!useAppStoreCode.includes("updates.enableSystemMediaControl !== undefined")) {
+              useAppStoreCode = useAppStoreCode.replace(
+                "if (updates.allowSimultaneousPlayback !== undefined) {",
+                [
+                  "if (updates.enableSystemMediaControl !== undefined) {",
+                  "            void Orpheus.setAllowSimultaneousPlayback(!updates.enableSystemMediaControl)",
+                  "          }",
+                  "          if (updates.allowSimultaneousPlayback !== undefined) {"
+                ].join("\n")
+              );
+            }
+            fs.writeFileSync(useAppStorePath, useAppStoreCode, "utf8");
+            console.log("✅ 已在 useAppStore.ts 中配置 openPlayerOnTrackPress 与 enableSystemMediaControl");
+          }
+
+          const layoutAppPath = "apps/mobile/src/app/_layout.tsx";
+          if (fs.existsSync(layoutAppPath)) {
+            let layoutAppCode = fs.readFileSync(layoutAppPath, "utf8");
+            if (!layoutAppCode.includes("settings.enableSystemMediaControl")) {
+              layoutAppCode = layoutAppCode.replace(
+                /void Orpheus\.setAllowSimultaneousPlayback\([\s\S]*?settings\.allowSimultaneousPlayback,[\s\S]*?\)/,
+                "const enableSystemMediaControl = settings.enableSystemMediaControl ?? (!settings.allowSimultaneousPlayback);\n\t\t\tvoid Orpheus.setAllowSimultaneousPlayback(!enableSystemMediaControl)"
+              );
+              fs.writeFileSync(layoutAppPath, layoutAppCode, "utf8");
+              console.log("✅ 已在 _layout.tsx 中初始化 enableSystemMediaControl 状态");
+            }
+          }
+
+          const playbackSettingsPath = "apps/mobile/src/app/settings/playback.tsx";
+          if (fs.existsSync(playbackSettingsPath)) {
+            let playbackCode = fs.readFileSync(playbackSettingsPath, "utf8");
+            if (!playbackCode.includes("enableSystemMediaControl")) {
+              playbackCode = playbackCode.replace(
+                "const allowSimultaneousPlayback = useAppStore(",
+                "const enableSystemMediaControl = useAppStore((state) => state.settings.enableSystemMediaControl ?? (!state.settings.allowSimultaneousPlayback))\n\tconst allowSimultaneousPlayback = useAppStore("
+              );
+            }
+            if (!playbackCode.includes("openPlayerOnTrackPress")) {
+              playbackCode = playbackCode.replace(
+                "const setSettings = useAppStore((state) => state.setSettings)",
+                "const setSettings = useAppStore((state) => state.setSettings)\n\tconst openPlayerOnTrackPress = useAppStore((state) => state.settings.openPlayerOnTrackPress ?? true)"
+              );
+            }
+            const regexRow = /<View style=\{styles\.settingRow\}>[ \t\r\n]*<Text>允许与其他软件同时播放<\/Text>[\s\S]*?<\/View>/;
+            if (regexRow.test(playbackCode)) {
+              const newRows = [
+                "<View style={styles.settingRow}>",
+                "          <View style={{ flexShrink: 1, paddingRight: 10 }}>",
+                "            <Text>点击单曲时直接进入播放界面</Text>",
+                "            <Text variant='bodySmall'>",
+                "              开启后在列表中点击单曲将直接跳转到全屏播放界面，关闭则留在当前列表。",
+                "            </Text>",
+                "          </View>",
+                "          <UniversalSwitch",
+                "            value={openPlayerOnTrackPress}",
+                "            onValueChange={(value) => {",
+                "              setSettings({ openPlayerOnTrackPress: value })",
+                "            }}",
+                "          />",
+                "        </View>",
+                "        <View style={styles.settingRow}>",
+                "          <View style={{ flexShrink: 1, paddingRight: 10 }}>",
+                "            <Text>系统控制中心与灵动岛联动</Text>",
+                "            <Text variant='bodySmall'>",
+                "              开启后在系统控制中心显示并支持灵动岛动画，与其他音乐软件互斥独占播放（推荐）；关闭后恢复原始模式，可与其他应用同时发声且不占用系统控制中心。",
+                "            </Text>",
+                "          </View>",
+                "          <UniversalSwitch",
+                "            value={enableSystemMediaControl}",
+                "            onValueChange={(value) => {",
+                "              setSettings({",
+                "                enableSystemMediaControl: value,",
+                "                allowSimultaneousPlayback: !value,",
+                "              })",
+                "              void Orpheus.setAllowSimultaneousPlayback(!value)",
+                "            }}",
+                "          />",
+                "        </View>",
+                "        <View style={styles.settingRow}>",
+                "          <View style={{ flexShrink: 1, paddingRight: 10 }}>",
+                "            <Text>允许与其他软件同时播放</Text>",
+                "            <Text variant='bodySmall'>",
+                "              关闭时启用独占控制中心与灵动岛；开启时可与其他软件同时播放。",
+                "            </Text>",
+                "          </View>",
+                "          <UniversalSwitch",
+                "            value={allowSimultaneousPlayback}",
+                "            onValueChange={(value) => {",
+                "              setSettings({",
+                "                allowSimultaneousPlayback: value,",
+                "                enableSystemMediaControl: !value,",
+                "              })",
+                "              void Orpheus.setAllowSimultaneousPlayback(value)",
+                "            }}",
+                "          />",
+                "        </View>"
+              ].join("\n");
+              playbackCode = playbackCode.replace(regexRow, newRows);
+              fs.writeFileSync(playbackSettingsPath, playbackCode, "utf8");
+              console.log("✅ 已在 settings/playback.tsx 中添加控制中心联动与单曲点击直接播放设置项");
+            }
+          }
+
+          const playerUtilPath = "apps/mobile/src/utils/player.ts";
+          if (fs.existsSync(playerUtilPath)) {
+            let playerUtil = fs.readFileSync(playerUtilPath, "utf8");
+            if (!playerUtil.includes("import { router } from 'expo-router'")) {
+              playerUtil = "import { router } from 'expo-router'\n" + playerUtil;
+            }
+            const submitRegex = /await submit\(\{[\s\S]*?\}\)[\s\S]*?return true/;
+            if (!playerUtil.includes("openPlayerOnTrackPress !== false") && submitRegex.test(playerUtil)) {
+              playerUtil = playerUtil.replace(
+                submitRegex,
+                [
+                  "await submit({",
+                  "      tracks: orpheusTracks,",
+                  "      playNow,",
+                  "      startFromKey,",
+                  "      playNext,",
+                  "      playlistId,",
+                  "    })",
+                  "    if (playNow || startFromKey) {",
+                  "      const shouldOpenPlayer = useAppStore.getState().settings.openPlayerOnTrackPress !== false",
+                  "      if (shouldOpenPlayer) {",
+                  "        setTimeout(() => {",
+                  "          try {",
+                  "            router.navigate('/player')",
+                  "          } catch {}",
+                  "        }, 120)",
+                  "      }",
+                  "    }",
+                  "    return true"
+                ].join("\n")
+              );
+              fs.writeFileSync(playerUtilPath, playerUtil, "utf8");
+              console.log("✅ 已在 utils/player.ts 中支持点击歌曲自动路由跳转到播放界面");
+            }
+          }
+          // 19. 为本地播放列表添加向左滑动移除歌曲选项（仅限本地列表，排除B站稍后再看等远端列表）：
+          const playlistIdPath = "apps/mobile/src/app/playlist/local/[id].tsx";
+          if (fs.existsSync(playlistIdPath)) {
+            let playlistIdCode = fs.readFileSync(playlistIdPath, "utf8");
+            if (!playlistIdCode.includes("onDeleteTrack=")) {
+              playlistIdCode = playlistIdCode.replace(
+                "trackMenuItems={trackMenuItems}",
+                "trackMenuItems={trackMenuItems}\n\t\t\t\t\tonDeleteTrack={playlistMetadata.type === 'local' && !isSharedSubscriber ? deleteTrack : undefined}"
+              );
+              fs.writeFileSync(playlistIdPath, playlistIdCode, "utf8");
+              console.log("✅ 已在 [id].tsx 中为 LocalTrackList 传入 onDeleteTrack 属性");
+            }
+          }
+
+          const trackListPath = "apps/mobile/src/features/playlist/local/components/LocalTrackList.tsx";
+          if (fs.existsSync(trackListPath)) {
+            let trackListCode = fs.readFileSync(trackListPath, "utf8");
+            if (!trackListCode.includes("ReanimatedSwipeable")) {
+              trackListCode = 'import ReanimatedSwipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable"\nimport toast from "@/utils/toast"\n' + trackListCode;
+              trackListCode = trackListCode.replace(
+                "import { ScrollView, StyleSheet, View } from 'react-native'",
+                "import { Pressable, ScrollView, StyleSheet, View } from 'react-native'"
+              );
+              trackListCode = trackListCode.replace(
+                "import {\n\tDivider,",
+                "import {\n\tDivider,\n\tIcon,"
+              );
+              trackListCode = trackListCode.replace(
+                "/** 多选状态管理 */\n\tselection: SelectionState",
+                "/** 删除曲目时的处理函数（向左滑动从列表中移除） */\n\tonDeleteTrack?: (trackId: number) => void\n\t/** 多选状态管理 */\n\tselection: SelectionState"
+              );
+              trackListCode = trackListCode.replace(
+                "handleMenuPress: (track: Track, downloadState?: DownloadState) => void\n\t\tselection: SelectionState",
+                "handleMenuPress: (track: Track, downloadState?: DownloadState) => void\n\t\tonDeleteTrack?: (trackId: number) => void\n\t\tselection: SelectionState"
+              );
+              trackListCode = trackListCode.replace(
+                "const {\n\t\thandleTrackPress,\n\t\thandleMenuPress,\n\t\tselection,",
+                "const {\n\t\thandleTrackPress,\n\t\thandleMenuPress,\n\t\tonDeleteTrack,\n\t\tselection,"
+              );
+              const renderItemReturnRegex = /return \([\s\S]*?<View style=\{\{ opacity: isStale \|\| isUnplayableOffline \? 0\.4 : 1 \}\}>[\s\S]*?<\/TrackListItem>[\s\S]*?<\/View>[\s\S]*?\)/;
+              if (renderItemReturnRegex.test(trackListCode)) {
+                const newRenderReturn = [
+                  "const isSwipeable =",
+                  "    playlist.type === 'local' &&",
+                  "    !isReadOnly &&",
+                  "    !selection.selectMode &&",
+                  "    typeof onDeleteTrack === 'function'",
+                  "",
+                  "  const itemContent = (",
+                  "    <View style={{ opacity: isStale || isUnplayableOffline ? 0.4 : 1 }}>",
+                  "      <TrackListItem",
+                  "        index={index}",
+                  "        onTrackPress={() => handleTrackPress(item)}",
+                  "        onMenuPress={() => {",
+                  "          handleMenuPress(item, downloadState)",
+                  "        }}",
+                  "        onDragStart={",
+                  "          isReadOnly",
+                  "            ? undefined",
+                  "            : (absoluteY) => onDragStart?.(index, item.id, absoluteY)",
+                  "        }",
+                  "        onDragUpdate={isReadOnly ? undefined : onDragUpdate}",
+                  "        onDragEnd={isReadOnly ? undefined : onDragEnd}",
+                  "        disabled={",
+                  "          item.source === 'bilibili' &&",
+                  "          item.bilibiliMetadata.state === 'inactive'",
+                  "        }",
+                  "        playlist={playlist}",
+                  "        data={item}",
+                  "        selectMode={selection.selectMode}",
+                  "        isSelected={selection.isSelected(item.id)}",
+                  "        toggleSelected={selection.toggleSelected}",
+                  "        enterSelectMode={selection.enterSelectMode}",
+                  "        isSearching={isSearching}",
+                  "        isReadOnly={isReadOnly}",
+                  "        downloadState={downloadState}",
+                  "      />",
+                  "    </View>",
+                  "  )",
+                  "",
+                  "  if (!isSwipeable) {",
+                  "    return itemContent",
+                  "  }",
+                  "",
+                  "  return (",
+                  "    <ReanimatedSwipeable",
+                  "      friction={2}",
+                  "      overshootRight={false}",
+                  "      rightThreshold={40}",
+                  "      renderRightActions={(_progress, _translation, swipeableMethods) => (",
+                  "        <View style={styles.swipeDeleteContainer}>",
+                  "          <Pressable",
+                  "            style={styles.swipeDeleteButton}",
+                  "            onPress={() => {",
+                  "              swipeableMethods.close()",
+                  "              onDeleteTrack?.(item.id)",
+                  "              toast.success('已从列表中移除')",
+                  "            }}",
+                  "          >",
+                  "            <Icon source='trash-can-outline' size={22} color='#ffffff' />",
+                  "            <Text style={styles.swipeDeleteText}>移除</Text>",
+                  "          </Pressable>",
+                  "        </View>",
+                  "      )}",
+                  "    >",
+                  "      {itemContent}",
+                  "    </ReanimatedSwipeable>",
+                  "  )"
+                ].join("\n");
+                trackListCode = trackListCode.replace(renderItemReturnRegex, newRenderReturn);
+              }
+              trackListCode = trackListCode.replace(
+                "selection,\n\tlistRef,",
+                "selection,\n\tonDeleteTrack,\n\tlistRef,"
+              );
+              trackListCode = trackListCode.replace(
+                "handleTrackPress,\n\t\thandleMenuPress,\n\t\tselection,",
+                "handleTrackPress,\n\t\thandleMenuPress,\n\t\tonDeleteTrack,\n\t\tselection,"
+              );
+              trackListCode = trackListCode.replace(
+                "handleTrackPress,\n\t\thandleMenuPress,\n\t\tselection,",
+                "handleTrackPress,\n\t\thandleMenuPress,\n\t\tonDeleteTrack,\n\t\tselection,"
+              );
+              trackListCode = trackListCode.replace(
+                "const styles = StyleSheet.create({",
+                [
+                  "const styles = StyleSheet.create({",
+                  "  swipeDeleteContainer: {",
+                  "    width: 80,",
+                  "    justifyContent: 'center',",
+                  "    alignItems: 'center',",
+                  "  },",
+                  "  swipeDeleteButton: {",
+                  "    width: 80,",
+                  "    height: '100%',",
+                  "    backgroundColor: '#ff3b30',",
+                  "    justifyContent: 'center',",
+                  "    alignItems: 'center',",
+                  "  },",
+                  "  swipeDeleteText: {",
+                  "    color: '#ffffff',",
+                  "    fontSize: 13,",
+                  "    fontWeight: '600',",
+                  "    marginTop: 2,",
+                  "  },"
+                ].join("\n")
+              );
+              fs.writeFileSync(trackListPath, trackListCode, "utf8");
+              console.log("✅ 已在 LocalTrackList.tsx 中实现向左滑动移除歌曲选项");
+            }
           }
 
           EOF
