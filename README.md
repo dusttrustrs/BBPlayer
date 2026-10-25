@@ -26,7 +26,7 @@
 
 | 欢迎页面 | 登录与模式选择 | 搜索页 | 音乐库 | “我的”页面 |
 | :---: | :---: | :---: | :---: | :---: |
-| ![欢迎页面](<img width="603" height="1311" alt="IMG_3015" src="https://github.com/user-attachments/assets/4ebabb0a-c1d0-4ea4-b407-5edf2d17f593" />) | ![登录选择](<img width="603" height="1311" alt="IMG_3017" src="https://github.com/user-attachments/assets/783d2d58-945d-44d6-8f4d-774bde8f9c71" />) | ![搜索](<img width="603" height="1311" alt="IMG_3012" src="https://github.com/user-attachments/assets/953f45ea-5a4a-4b9c-9394-b714918a1a7c" />) | ![音乐库](<img width="603" height="1311" alt="IMG_3013" src="https://github.com/user-attachments/assets/87842253-7c73-433b-b54e-6cb44b1d3f4e" />) | ![我的](<img width="603" height="1311" alt="IMG_3014" src="https://github.com/user-attachments/assets/ad91d0e6-f20b-4785-80b5-3f5daa8967c5" />) |
+| ![欢迎页面](https://github.com/user-attachments/assets/4ebabb0a-c1d0-4ea4-b407-5edf2d17f593) | ![登录选择](https://github.com/user-attachments/assets/783d2d58-945d-44d6-8f4d-774bde8f9c71) | ![搜索](https://github.com/user-attachments/assets/953f45ea-5a4a-4b9c-9394-b714918a1a7c) | ![音乐库](https://github.com/user-attachments/assets/87842253-7c73-433b-b54e-6cb44b1d3f4e) | ![我的](https://github.com/user-attachments/assets/ad91d0e6-f20b-4785-80b5-3f5daa8967c5) |
 
 ---
 
