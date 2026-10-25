@@ -122,20 +122,28 @@ jobs:
             throw new Error("未在 AudioSpectrumAnalyzer.swift 中找到待修复的 MTAudioProcessingTapCreate 代码块");
           }
 
-          // 同时消除 DSPSplitComplex 临时指针生命周期告警，避免 Release (-O) 优化下产生悬垂指针隐患
-          const dspPattern = /var splitComplex = DSPSplitComplex\(realp: &realOut, imagp: &imagOut\)\s*vDSP_zvabs\(&splitComplex, 1, &magnitudes, 1, vDSP_Length\(fftSize\)\)/;
+          // 同时修复 DSPSplitComplex 临时指针作用域与 vDSP_vsmul(&magnitudes, ..., &magnitudes, ...) 的 Swift 内存独占访问冲突 (overlapping accesses to 'magnitudes')
+          const dspPattern = /var splitComplex = DSPSplitComplex\(realp: &realOut, imagp: &imagOut\)[\s\S]*?vDSP_vsmul\(&magnitudes, 1, &scale, &magnitudes, 1, vDSP_Length\(fftSize\)\)/;
           if (dspPattern.test(analyzer)) {
             analyzer = analyzer.replace(
               dspPattern,
-          `realOut.withUnsafeMutableBufferPointer { realPtr in
+          `var scale = 1.0 / Float(fftSize)
+                  realOut.withUnsafeMutableBufferPointer { realPtr in
                       imagOut.withUnsafeMutableBufferPointer { imagPtr in
-                          guard let realBase = realPtr.baseAddress, let imagBase = imagPtr.baseAddress else { return }
-                          var splitComplex = DSPSplitComplex(realp: realBase, imagp: imagBase)
-                          vDSP_zvabs(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftSize))
+                          magnitudes.withUnsafeMutableBufferPointer { magPtr in
+                              guard let realBase = realPtr.baseAddress,
+                                    let imagBase = imagPtr.baseAddress,
+                                    let magBase = magPtr.baseAddress else { return }
+                              var splitComplex = DSPSplitComplex(realp: realBase, imagp: imagBase)
+                              vDSP_zvabs(&splitComplex, 1, magBase, 1, vDSP_Length(fftSize))
+                              vDSP_vsmul(magBase, 1, &scale, magBase, 1, vDSP_Length(fftSize))
+                          }
                       }
                   }`
             );
-            console.log("✅ 已修复 AudioSpectrumAnalyzer.swift 中的 DSPSplitComplex 指针作用域");
+            console.log("✅ 已修复 AudioSpectrumAnalyzer.swift 中的 DSPSplitComplex 指针作用域与 vDSP_vsmul 内存独占访问冲突");
+          } else if (!analyzer.includes("vDSP_vsmul(magBase")) {
+            throw new Error("未在 AudioSpectrumAnalyzer.swift 中找到待修复的 DSPSplitComplex / vDSP_vsmul 代码块");
           }
           fs.writeFileSync(analyzerPath, analyzer, "utf8");
 
