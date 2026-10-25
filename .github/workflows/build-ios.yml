@@ -10,6 +10,9 @@ on:
       - 'apps/mobile/**'
       - 'packages/**'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-ios:
     name: Build iOS IPA (Unsigned)
@@ -21,8 +24,36 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # 获取完整提交历史以便正确计算版本号
-      - name: Select Xcode 16.2
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+
+      - name: 🍎 自动选择与 Simulator Runtime 匹配的 Xcode
+        run: |
+          # 获取当前 Runner 已安装的所有 iOS Simulator Runtime 构建版本号 (例如 22F77, 22G86, 23C54 等)
+          INSTALLED_RUNTIMES=$(xcrun simctl list runtimes -j | grep -oE '"buildversion"\s*:\s*"[^"]+"' | awk -F'"' '{print $4}')
+          echo "当前已安装的 Simulator Runtimes:"
+          echo "$INSTALLED_RUNTIMES"
+
+          SELECTED_XCODE=""
+          # 优先按从新到旧检查 Xcode 16.x (例如 Xcode_16.4.app 对应 22F77)，若无匹配再检查其他 Xcode 版本
+          XCODE_CANDIDATES=$( (ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -r; ls -d /Applications/Xcode*.app 2>/dev/null | sort -r) | awk '!seen[$0]++' )
+          for xcode in $XCODE_CANDIDATES; do
+            SDK_PLIST="$xcode/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/CoreServices/SystemVersion.plist"
+            if [ -f "$SDK_PLIST" ]; then
+              SDK_BUILD=$(/usr/libexec/PlistBuddy -c "Print :ProductBuildVersion" "$SDK_PLIST" 2>/dev/null || true)
+              echo "检查 $xcode -> SDK Build: $SDK_BUILD"
+              if echo "$INSTALLED_RUNTIMES" | grep -qx "$SDK_BUILD"; then
+                SELECTED_XCODE="$xcode"
+                break
+              fi
+            fi
+          done
+
+          if [ -n "$SELECTED_XCODE" ]; then
+            echo "✅ 选中匹配的 Xcode: $SELECTED_XCODE"
+            sudo xcode-select -s "$SELECTED_XCODE/Contents/Developer"
+          else
+            echo "⚠️ 未找到精确匹配的特定版本，使用系统默认 Xcode"
+          fi
+          xcodebuild -version
 
       - name: 🟢 配置 Node.js
         uses: actions/setup-node@v4
@@ -52,13 +83,10 @@ jobs:
       - name: 🍎 安装 CocoaPods 依赖
         run: |
           cd apps/mobile/ios
-          # 1. 禁用 Firebase SPM
+          # 禁用 Firebase SPM
           sed -i '' '1i\'$'\n''$RNFirebaseDisableSPM = true'$'\n' Podfile
-          
-          # 2. 彻底移除会导致 Xcode 16 编译崩溃的 expo-dev-menu 资源包配置
-          find ../../../node_modules -name "expo-dev-menu.podspec" -exec sed -i '' '/resource_bundles/,/}/d' {} +
-          
-          # 3. 安装 Pods
+
+          # 安装 Pods
           pod install --repo-update
 
       - name: 🔨 编译 iOS App (禁用代码签名)
