@@ -937,6 +937,490 @@ jobs:
           } catch (e) {
             console.warn("⚠️ @expo/ui colors 防御修补警告:", e.message);
           }
+
+          // 11. 开启 iOS 灵动岛系统动画与后台控制联动：
+          // (a) 在主线程调用 UIApplication.shared.beginReceivingRemoteControlEvents() 注册系统控制权；
+          // (b) 每次播放状态变化时，显式同步 MPNowPlayingInfoCenter.default().playbackState (.playing / .paused)，
+          //     使 SpringBoard 识别前台 App 为活跃音频源，在向上滑动返回桌面时触发“飞入灵动岛”系统级流体动画；
+          // (c) 在 play()、pause() 和 loadAvPlayerItem 中保持音频会话激活与实时更新状态。
+          const playerMgrPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
+          if (fs.existsSync(playerMgrPath)) {
+            let playerMgr = fs.readFileSync(playerMgrPath, "utf8");
+            if (!playerMgr.includes("UIApplication.shared.beginReceivingRemoteControlEvents()")) {
+              playerMgr = playerMgr.replace(
+                "private func setupRemoteCommands() {",
+                "private func setupRemoteCommands() {\n        DispatchQueue.main.async {\n            UIApplication.shared.beginReceivingRemoteControlEvents()\n        }"
+              );
+            }
+            if (!playerMgr.includes("MPNowPlayingInfoCenter.default().playbackState")) {
+              playerMgr = playerMgr.replace(
+                "MPNowPlayingInfoCenter.default().nowPlayingInfo = info\n    }",
+                "MPNowPlayingInfoCenter.default().nowPlayingInfo = info\n        MPNowPlayingInfoCenter.default().playbackState = (self.player.timeControlStatus == .playing || self.player.rate > 0) ? .playing : .paused\n    }"
+              );
+              playerMgr = playerMgr.replace(
+                "player.play()\n    }\n    \n    func pause() {",
+                "setupAudioSession()\n        player.play()\n        updateNowPlayingInfo()\n    }\n    \n    func pause() {\n        player.pause()\n        MPNowPlayingInfoCenter.default().playbackState = .paused\n        updateNowPlayingInfo()"
+              );
+              playerMgr = playerMgr.replace(
+                "player.replaceCurrentItem(with: item)",
+                "setupAudioSession()\n        player.replaceCurrentItem(with: item)"
+              );
+              playerMgr = playerMgr.replace(
+                "player.play()\n        \n\n    }",
+                "player.play()\n        updateNowPlayingInfo()\n    }"
+              );
+            }
+            fs.writeFileSync(playerMgrPath, playerMgr, "utf8");
+            console.log("✅ 已配置 OrpheusPlayerManager.swift 支持系统灵动岛飞入动画与 NowPlaying 同步");
+          }
+
+          // 12. 修复歌曲评论区界面 UI 错位与居中对齐：
+          // 将返回按钮移至左上方（与下方评论列表的头像左对齐），标题“评论区”居中对齐并添加对称占位。
+          const commentsBvidPath = "apps/mobile/src/app/comments/[bvid].tsx";
+          if (fs.existsSync(commentsBvidPath)) {
+            let bvidCode = fs.readFileSync(commentsBvidPath, "utf8");
+            bvidCode = bvidCode.replace(
+              /<Appbar\.Header elevated>[\s\S]*?<\/Appbar\.Header>/,
+              `<Appbar.Header elevated>
+				<Appbar.BackAction onPress={() => router.back()} />
+				<Appbar.Content title={'评论区'} titleStyle={{ textAlign: 'center' }} />
+				<Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />
+			</Appbar.Header>`
+            );
+            fs.writeFileSync(commentsBvidPath, bvidCode, "utf8");
+            console.log("✅ 已修复 [bvid].tsx 评论区返回按钮左对齐与标题居中");
+          }
+          const commentsReplyPath = "apps/mobile/src/app/comments/reply.tsx";
+          if (fs.existsSync(commentsReplyPath)) {
+            let replyCode = fs.readFileSync(commentsReplyPath, "utf8");
+            replyCode = replyCode.replace(
+              /<Appbar\.Header elevated>[\s\S]*?<\/Appbar\.Header>/,
+              `<Appbar.Header elevated>
+				<Appbar.BackAction onPress={() => router.back()} />
+				<Appbar.Content title={'评论区'} titleStyle={{ textAlign: 'center' }} />
+				<Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />
+			</Appbar.Header>`
+            );
+            fs.writeFileSync(commentsReplyPath, replyCode, "utf8");
+            console.log("✅ 已修复 reply.tsx 评论回复返回按钮左对齐与标题居中");
+          }
+
+          // 13. 修复音乐库合集/收藏夹详情页导航栏对齐问题：
+          // 返回按钮移至最左侧并与屏幕左对齐，歌单名称标题居中显示。
+          const collPagePath = "apps/mobile/src/app/playlist/remote/collection/[id].tsx";
+          if (fs.existsSync(collPagePath)) {
+            let collCode = fs.readFileSync(collPagePath, "utf8");
+            collCode = collCode.replace(
+              /<Appbar\.Header[\s\S]*?<\/Appbar\.Header>/,
+              `<Appbar.Header
+				elevated
+				style={{ backgroundColor: 'transparent' }}
+			>
+				<Appbar.BackAction
+					onPress={() => {
+						if (selectMode) {
+							setSelectMode(false)
+							setSelected(new Set())
+						} else {
+							router.back()
+						}
+					}}
+				/>
+				<Appbar.Content
+					title={
+						selectMode
+							? \`已选择\\u2009\${selected.size}\\u2009首\`
+							: collectionData.info.title
+					}
+					titleStyle={!selectMode ? { textAlign: 'center' } : undefined}
+					onPress={handleDoubleTap}
+				/>
+				{selectMode ? (
+					<>
+						<Appbar.Action
+							icon='select-all'
+							onPress={() => setSelected(new Set(tracks.map((t) => t.id)))}
+						/>
+						<Appbar.Action
+							icon='select-compare'
+							onPress={() =>
+								setSelected(
+									new Set(
+										tracks.filter((t) => !selected.has(t.id)).map((t) => t.id),
+									),
+								)
+							}
+						/>
+						<Appbar.Action
+							icon='playlist-plus'
+							onPress={() => {
+								const payloads = []
+								for (const selectedId of selected) {
+									const track = tracks.find((t) => t.id === selectedId)
+									if (track) {
+										payloads.push({
+											track: track as Track,
+											artist: track.artist!,
+										})
+									}
+								}
+								openModal('BatchAddTracksToLocalPlaylist', {
+									payloads,
+								})
+							}}
+						/>
+					</>
+				) : (
+					<Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />
+				)}
+			</Appbar.Header>`
+            );
+            fs.writeFileSync(collPagePath, collCode, "utf8");
+            console.log("✅ 已修复 collection/[id].tsx 合集详情页返回按钮左对齐与标题居中");
+          }
+
+          const favPagePath = "apps/mobile/src/app/playlist/remote/favorite/[id].tsx";
+          if (fs.existsSync(favPagePath)) {
+            let favCode = fs.readFileSync(favPagePath, "utf8");
+            favCode = favCode.replace(
+              /<Appbar\.Header[\s\S]*?<\/Appbar\.Header>/,
+              `<Appbar.Header
+				elevated
+				style={{ backgroundColor: 'transparent' }}
+			>
+				<Appbar.BackAction
+					onPress={() => {
+						if (selectMode) {
+							setSelectMode(false)
+							setSelected(new Set())
+						} else {
+							router.back()
+						}
+					}}
+				/>
+				<Appbar.Content
+					title={
+						selectMode
+							? \`已选择\\u2009\${selected.size}\\u2009首\`
+							: favoriteData.pages[0].info.title
+					}
+					titleStyle={!selectMode ? { textAlign: 'center' } : undefined}
+					onPress={handleDoubleTap}
+				/>
+				{selectMode ? (
+					<>
+						<Appbar.Action
+							icon='playlist-plus'
+							onPress={() => {
+								const payloads = []
+								for (const selectedId of selected) {
+									const track = tracks.find((t) => t.id === selectedId)
+									if (track) {
+										payloads.push({
+											track: track as Track,
+											artist: track.artist!,
+										})
+									}
+								}
+								openModal('BatchAddTracksToLocalPlaylist', {
+									payloads,
+								})
+							}}
+						/>
+					</>
+				) : (
+					<Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />
+				)}
+			</Appbar.Header>`
+            );
+            fs.writeFileSync(favPagePath, favCode, "utf8");
+            console.log("✅ 已修复 favorite/[id].tsx 收藏夹详情页返回按钮左对齐与标题居中");
+          }
+
+          // 14. 优化“我的”界面底部可下拉滚动区域：
+          // 增加底部内边距（从 86 提升至 180），确保“那月今日”不会被底栏歌曲播放条遮挡。
+          const myTabPath = "apps/mobile/src/app/(tabs)/my.tsx";
+          if (fs.existsSync(myTabPath)) {
+            let myTabCode = fs.readFileSync(myTabPath, "utf8");
+            myTabCode = myTabCode.replace(
+              "{ paddingBottom: haveTrack ? 86 : 24 }",
+              "{ paddingBottom: haveTrack ? 180 : 100 }"
+            );
+            fs.writeFileSync(myTabPath, myTabCode, "utf8");
+            console.log("✅ 已增大 (tabs)/my.tsx 底部滚动安全间距以避免遮挡那月今日");
+          }
+
+          // 15. 将检查更新替换为 dusttrustrs/BBPlayer-iOS-Package 的 GitHub Release 更新源：
+          // 同步版本号为 1.0.0，从 GitHub 官方 Releases API 拉取最新发行说明与链接。
+          const updateSvcPath = "apps/mobile/src/lib/services/updateService.ts";
+          if (fs.existsSync(updateSvcPath)) {
+            let updateSvcCode = fs.readFileSync(updateSvcPath, "utf8");
+            updateSvcCode = updateSvcCode.replace(
+              /export async function fetchLatestRelease\(\): Promise<[\s\S]*?\n\}/,
+              `export async function fetchLatestRelease(): Promise<Result<ReleaseInfo, Error>> {
+	try {
+		const res = await Sentry.startSpan(
+			{ name: 'http:fetch:update-manifest', op: 'http' },
+			() =>
+				fetch('https://api.github.com/repos/dusttrustrs/BBPlayer-iOS-Package/releases/latest', {
+					cache: 'no-store',
+					headers: {
+						'User-Agent': 'BBPlayer-iOS',
+						'Accept': 'application/vnd.github.v3+json',
+					},
+				}),
+		)
+		if (!res.ok) {
+			return err(new Error(\`获取更新信息失败: \${res.status} \${res.statusText}\`))
+		}
+		const data = (await res.json()) as Record<string, unknown>
+		const rawTag = typeof data.tag_name === 'string' ? data.tag_name : '1.0.0'
+		const version = normalizeVersion(rawTag.replace(/^v/, '').split('-')[0])
+		const url =
+			typeof data.html_url === 'string'
+				? data.html_url
+				: 'https://github.com/dusttrustrs/BBPlayer-iOS-Package/releases/latest'
+		const notes = typeof data.body === 'string' ? data.body : ''
+		const releaseInfo: ReleaseInfo = {
+			version,
+			url,
+			notes,
+			forced: false,
+		}
+		return ok(releaseInfo)
+	} catch (e) {
+		return err(toError(e))
+	}
+}`
+            );
+            fs.writeFileSync(updateSvcPath, updateSvcCode, "utf8");
+            console.log("✅ 已配置 updateService.ts 指向 GitHub Release API 更新源");
+          }
+
+          const mobilePkgPath = "apps/mobile/package.json";
+          if (fs.existsSync(mobilePkgPath)) {
+            const pkgData = JSON.parse(fs.readFileSync(mobilePkgPath, "utf8"));
+            pkgData.version = "1.0.0";
+            fs.writeFileSync(mobilePkgPath, JSON.stringify(pkgData, null, 2) + "\n", "utf8");
+            console.log("✅ 已同步 apps/mobile/package.json 版本号为 1.0.0 (匹配 iOS 发布版)");
+          }
+
+          const appConfigPath = "apps/mobile/app.config.ts";
+          if (fs.existsSync(appConfigPath)) {
+            let appCfgCode = fs.readFileSync(appConfigPath, "utf8");
+            appCfgCode = appCfgCode.replace(
+              /updateManifestUrl:\s*['"][^'"]+['"]/,
+              "updateManifestUrl: 'https://api.github.com/repos/dusttrustrs/BBPlayer-iOS-Package/releases/latest'"
+            );
+            fs.writeFileSync(appConfigPath, appCfgCode, "utf8");
+            console.log("✅ 已配置 app.config.ts updateManifestUrl");
+          }
+
+          // 16. 修复歌曲播放界面“定时关闭”弹窗尺寸过大与键盘无法收起的问题：
+          // (a) 将 15/30/45/60 分钟预设恢复为 compact 精简单行排列，避免大网格撑满屏幕；
+          // (b) 引入 TouchableWithoutFeedback 与 Keyboard.dismiss，点击空白处自动收起键盘；
+          // (c) 自定义分钟输入框提供“设置”与“收起”快捷按钮，并支持 returnKeyType='done'。
+          const sleepModalPath = "apps/mobile/src/components/modals/player/SleepTimerModal.tsx";
+          if (fs.existsSync(sleepModalPath)) {
+            const sleepModalCode = [
+              'import { Orpheus } from "@bbplayer/orpheus"',
+              'import { useEffect, useState } from "react"',
+              'import { Keyboard, StyleSheet, TouchableWithoutFeedback, View } from "react-native"',
+              'import { Dialog, Text, TextInput } from "react-native-paper"',
+              '',
+              'import Button from "@/components/common/Button"',
+              'import { useSleepTimerEndTime } from "@/hooks/queries/orpheus"',
+              'import { useModalStore } from "@/hooks/stores/useModalStore"',
+              'import { toastAndLogError } from "@/utils/error-handling"',
+              'import { formatDurationToHHMMSS } from "@/utils/time"',
+              'import toast from "@/utils/toast"',
+              '',
+              'const PRESET_DURATIONS = [15, 30, 45, 60]',
+              '',
+              'const SleepTimerModal = () => {',
+              '	const close = useModalStore((state) => state.close)',
+              '	const { data: sleepTimerEndAt } = useSleepTimerEndTime()',
+              '	const [remainingTime, setRemainingTime] = useState<number | null>(null)',
+              '	const [customInputVisible, setCustomInputVisible] = useState(false)',
+              '	const [customMinutes, setCustomMinutes] = useState("")',
+              '',
+              '	useEffect(() => {',
+              '		if (sleepTimerEndAt) {',
+              '			const interval = setInterval(() => {',
+              '				const remaining = Math.round((sleepTimerEndAt - Date.now()) / 1000)',
+              '				if (remaining > 0) {',
+              '					setRemainingTime(remaining)',
+              '				} else {',
+              '					setRemainingTime(null)',
+              '					clearInterval(interval)',
+              '				}',
+              '			}, 1000)',
+              '			const remaining = Math.round((sleepTimerEndAt - Date.now()) / 1000)',
+              '			setRemainingTime(remaining > 0 ? remaining : null)',
+              '			return () => clearInterval(interval)',
+              '		} else {',
+              '			setRemainingTime(null)',
+              '		}',
+              '	}, [sleepTimerEndAt])',
+              '',
+              '	const handleSetTimer = async (minutes: number) => {',
+              '		Keyboard.dismiss()',
+              '		try {',
+              '			await Orpheus.setSleepTimer(minutes * 60 * 1000)',
+              '			toast.success("设置定时器成功")',
+              '			close("SleepTimer")',
+              '		} catch (e) {',
+              '			toastAndLogError("设置定时器失败", e, "Modal.SleepTimer")',
+              '		}',
+              '	}',
+              '',
+              '	const handleCancelTimer = async () => {',
+              '		Keyboard.dismiss()',
+              '		try {',
+              '			await Orpheus.cancelSleepTimer()',
+              '			toast.success("取消定时器成功")',
+              '			close("SleepTimer")',
+              '		} catch (e) {',
+              '			toastAndLogError("取消定时器失败", e, "Modal.SleepTimer")',
+              '		}',
+              '	}',
+              '',
+              '	return (',
+              '		<TouchableWithoutFeedback onPress={Keyboard.dismiss}>',
+              '			<View>',
+              '				<Dialog.Title>定时关闭</Dialog.Title>',
+              '				<Dialog.Content>',
+              '					{remainingTime ? (',
+              '						<View style={styles.remainingTimeContainer}>',
+              '							<Text variant="headlineMedium">',
+              '								剩余 {formatDurationToHHMMSS(remainingTime)}',
+              '							</Text>',
+              '						</View>',
+              '					) : (',
+              '						<Text style={styles.promptText}>选择预设时间或自定义</Text>',
+              '					)}',
+              '					<View style={styles.presetContainer}>',
+              '						{PRESET_DURATIONS.map((minutes) => (',
+              '							<Button',
+              '								key={minutes}',
+              '								mode="contained-tonal"',
+              '								compact',
+              '								onPress={() => handleSetTimer(minutes)}',
+              '								style={styles.presetButton}',
+              '								labelStyle={styles.presetLabel}',
+              '							>',
+              '								{minutes}分',
+              '							</Button>',
+              '						))}',
+              '					</View>',
+              '					{customInputVisible ? (',
+              '						<View style={styles.customInputContainer}>',
+              '							<TextInput',
+              '								label="分钟"',
+              '								value={customMinutes}',
+              '								onChangeText={setCustomMinutes}',
+              '								keyboardType="number-pad"',
+              '								returnKeyType="done"',
+              '								onSubmitEditing={Keyboard.dismiss}',
+              '								autoFocus',
+              '								mode="outlined"',
+              '								style={styles.customInput}',
+              '							/>',
+              '							<Button',
+              '								mode="contained"',
+              '								compact',
+              '								style={styles.actionBtn}',
+              '								onPress={async () => {',
+              '									const minutes = parseInt(customMinutes, 10)',
+              '									if (!isNaN(minutes) && minutes > 0) {',
+              '										await handleSetTimer(minutes)',
+              '									}',
+              '								}}',
+              '							>',
+              '								设置',
+              '							</Button>',
+              '							<Button',
+              '								mode="text"',
+              '								compact',
+              '								onPress={() => {',
+              '									Keyboard.dismiss()',
+              '									setCustomInputVisible(false)',
+              '								}}',
+              '							>',
+              '								收起',
+              '							</Button>',
+              '						</View>',
+              '					) : (',
+              '						<Button',
+              '							mode="text"',
+              '							compact',
+              '							onPress={() => setCustomInputVisible(true)}',
+              '						>',
+              '							自定义时间',
+              '						</Button>',
+              '					)}',
+              '				</Dialog.Content>',
+              '				<Dialog.Actions>',
+              '					{sleepTimerEndAt && (',
+              '						<Button',
+              '							onPress={handleCancelTimer}',
+              '							textColor="red"',
+              '						>',
+              '							取消定时器',
+              '						</Button>',
+              '					)}',
+              '					<Button onPress={() => { Keyboard.dismiss(); close("SleepTimer"); }}>关闭</Button>',
+              '				</Dialog.Actions>',
+              '			</View>',
+              '		</TouchableWithoutFeedback>',
+              '	)',
+              '}',
+              '',
+              'const styles = StyleSheet.create({',
+              '	remainingTimeContainer: {',
+              '		alignItems: "center",',
+              '		marginBottom: 12,',
+              '	},',
+              '	promptText: {',
+              '		textAlign: "center",',
+              '		marginBottom: 12,',
+              '	},',
+              '	presetContainer: {',
+              '		flexDirection: "row",',
+              '		justifyContent: "space-between",',
+              '		gap: 6,',
+              '		marginBottom: 12,',
+              '	},',
+              '	presetButton: {',
+              '		flex: 1,',
+              '		minWidth: 0,',
+              '	},',
+              '	presetLabel: {',
+              '		marginHorizontal: 4,',
+              '		marginVertical: 6,',
+              '		fontSize: 13,',
+              '	},',
+              '	customInputContainer: {',
+              '		flexDirection: "row",',
+              '		alignItems: "center",',
+              '		gap: 6,',
+              '		marginTop: 4,',
+              '	},',
+              '	customInput: {',
+              '		flex: 1,',
+              '		height: 40,',
+              '	},',
+              '	actionBtn: {',
+              '		marginLeft: 4,',
+              '	},',
+              '})',
+              '',
+              'export default SleepTimerModal'
+            ].join("\n");
+            fs.writeFileSync(sleepModalPath, sleepModalCode, "utf8");
+            console.log("✅ 已成功重构 SleepTimerModal.tsx 定时关闭弹窗尺寸与键盘响应");
+          }
+
           EOF
 
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
