@@ -1,132 +1,141 @@
-name: Build Unsigned iOS IPA
+name: Build iOS IPA (Unsigned)
 
 on:
-  workflow_dispatch: # 支持在 GitHub 页面手动一键触发构建
+  workflow_dispatch: # 支持在 GitHub Actions 页面手动点击运行
   push:
     branches:
-      - master
       - main
-    paths:
-      - 'apps/mobile/**'
-      - 'packages/**'
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      - dev
 
 jobs:
   build-ios:
-    name: Build iOS IPA (Unsigned)
-    runs-on: macos-15 # 使用 macOS 15 (Apple Silicon M1/M2) 虚拟环境
+    name: Build Unsigned IPA
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:
       - name: 🏗️ 检出代码
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # 获取完整提交历史以便正确计算版本号
 
-      - name: 🍎 自动选择与 Simulator Runtime 匹配的 Xcode
+      - name: 🍎 选择与 Simulator Runtime 精确匹配的 Xcode
         run: |
-          # 获取当前 Runner 已安装的所有 iOS Simulator Runtime 构建版本号 (例如 22F77, 22G86, 23C54 等)
-          INSTALLED_RUNTIMES=$(xcrun simctl list runtimes -j | grep -oE '"buildversion"\s*:\s*"[^"]+"' | awk -F'"' '{print $4}')
-          echo "当前已安装的 Simulator Runtimes:"
+          echo "=== Runner 已安装的 Xcode 列表 ==="
+          ls -d /Applications/Xcode*.app
+
+          echo "=== Runner 已安装的 Simulator Runtimes ==="
+          xcrun simctl list runtimes -v || true
+
+          # 获取当前 Runner 已安装的所用 Simulator Runtime Build 版本号集合 (例如 22F77, 22G86, 23A8464, 23B86, 23C54)
+          INSTALLED_RUNTIMES=$(xcrun simctl list runtimes | grep -oE '[0-9]{2}[A-Z][0-9A-Za-z]+' || true)
+          echo "已安装的 Runtime Build Versions:"
           echo "$INSTALLED_RUNTIMES"
 
           SELECTED_XCODE=""
-          # 优先按从新到旧检查 Xcode 16.x (例如 Xcode_16.4.app 对应 22F77)，若无匹配再检查其他 Xcode 版本
-          XCODE_CANDIDATES=$( (ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -r; ls -d /Applications/Xcode*.app 2>/dev/null | sort -r) | awk '!seen[$0]++' )
-          for xcode in $XCODE_CANDIDATES; do
-            SDK_PLIST="$xcode/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/CoreServices/SystemVersion.plist"
-            if [ -f "$SDK_PLIST" ]; then
-              SDK_BUILD=$(/usr/libexec/PlistBuddy -c "Print :ProductBuildVersion" "$SDK_PLIST" 2>/dev/null || true)
-              echo "检查 $xcode -> SDK Build: $SDK_BUILD"
-              if echo "$INSTALLED_RUNTIMES" | grep -qx "$SDK_BUILD"; then
+          # 优先从高版本 Xcode (26.2 -> 26.1.1 -> 26.0.1 -> 16.4) 开始匹配：
+          # 1. BBPlayer 使用了 Expo SDK 57 / RN 0.86 / @expo/ui / expo-glass-effect，高版本 Xcode 对 iOS 26 Liquid Glass API 支持最完整
+          # 2. 注意：必须读取 iPhoneSimulator.sdk/SDKSettings.plist 中的 :DefaultProperties:BUILD_VERSION
+          #    (在 macOS-15 上 Xcode 16.4 的 SDK build 是 22F76，而安装的 runtime 是 22F77，会导致 actool 报错！
+          #     而 Xcode 26.2 的 SDK build 是 23C54，Xcode 26.1.1 是 23B86，与已安装的 runtime 100% 精确匹配)
+          for xcode in $(ls -d /Applications/Xcode_*.app | sort -V -r); do
+            SDK_SETTINGS="$xcode/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/SDKSettings.plist"
+            if [ -f "$SDK_SETTINGS" ]; then
+              SDK_BUILD=$(/usr/libexec/PlistBuddy -c "Print :DefaultProperties:BUILD_VERSION" "$SDK_SETTINGS" 2>/dev/null || echo "")
+              echo "检查 $xcode -> iphonesimulator SDK Build: $SDK_BUILD"
+              if [ -n "$SDK_BUILD" ] && echo "$INSTALLED_RUNTIMES" | grep -qx "$SDK_BUILD"; then
                 SELECTED_XCODE="$xcode"
+                echo "✅ 找到与 Simulator Runtime ($SDK_BUILD) 100% 匹配的 Xcode: $SELECTED_XCODE"
                 break
               fi
             fi
           done
 
-          if [ -n "$SELECTED_XCODE" ]; then
-            echo "✅ 选中匹配的 Xcode: $SELECTED_XCODE"
-            sudo xcode-select -s "$SELECTED_XCODE/Contents/Developer"
-          else
-            echo "⚠️ 未找到精确匹配的特定版本，使用系统默认 Xcode"
+          # 兜底：如果上面未命中，显式优先选择 Xcode_26.2.app 或 Xcode_26.1.1.app
+          if [ -z "$SELECTED_XCODE" ]; then
+            for fallback in "/Applications/Xcode_26.2.app" "/Applications/Xcode_26.1.1.app" "/Applications/Xcode_26.0.1.app"; do
+              if [ -d "$fallback" ]; then
+                SELECTED_XCODE="$fallback"
+                break
+              fi
+            done
           fi
+
+          if [ -n "$SELECTED_XCODE" ]; then
+            sudo xcode-select -s "$SELECTED_XCODE/Contents/Developer"
+          fi
+
           xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-build-version
 
       - name: 🟢 配置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22.x
+          node-version: 22
 
       - name: 📦 配置 pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 11.25.0
-          run_install: false
 
       - name: 📥 安装依赖
-        env:
-          LEFTHOOK: "0" # 跳过 Git Hook 安装
         run: |
-          pnpm install --no-frozen-lockfile
+          pnpm install --frozen-lockfile
 
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
         env:
-          APP_VARIANT: production
-          VERSION_CODE: 1
+          EXPO_NO_TELEMETRY: 1
         run: |
           cd apps/mobile
-          npx expo prebuild --platform ios --clean --no-install
+          npx expo prebuild --platform ios --clean
 
       - name: 🍎 安装 CocoaPods 依赖
         run: |
           cd apps/mobile/ios
-          # 禁用 Firebase SPM
-          sed -i '' '1i\'$'\n''$RNFirebaseDisableSPM = true'$'\n' Podfile
-
-          # 安装 Pods
-          pod install --repo-update
+          # 移除仅用于 Debug 的 expo-dev-menu 和 expo-dev-launcher 中的 Assets.xcassets 资源包编译，避免无意义的 actool 调用
+          sed -i '' '/s.resource_bundles/d' ../../../node_modules/expo-dev-menu/expo-dev-menu.podspec || true
+          sed -i '' '/s.resource_bundles/,/}/d' ../../../node_modules/expo-dev-launcher/expo-dev-launcher.podspec || true
+          pod install
 
       - name: 🔨 编译 iOS App (禁用代码签名)
-        env:
-          SENTRY_DISABLE_AUTO_UPLOAD: "true" # 禁用 Sentry 上传以防止缺少凭据报错
         run: |
+          set -o pipefail
           cd apps/mobile/ios
           xcodebuild build \
             -workspace BBPlayer.xcworkspace \
             -scheme BBPlayer \
             -configuration Release \
             -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
             -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="" \
-            PROVISIONING_PROFILE_SPECIFIER=""
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO | tee "$RUNNER_TEMP/xcodebuild.log" || {
+              echo "❌ xcodebuild 编译失败，提取关键错误日志如下："
+              grep -E "(❌|error:|fatal error:|BUILD FAILED)" "$RUNNER_TEMP/xcodebuild.log" | tail -n 100 || true
+              exit 1
+            }
 
-      - name: 📦 打包为未签名 .ipa
-        run: |
-          cd apps/mobile/ios
-          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -type d | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ 未找到编译生成的 .app 文件"
-            exit 1
-          fi
-          echo "✅ 找到 App 路径: $APP_PATH"
-
-          # 构建标准 Payload 目录结构并打成 zip (ipa)
-          mkdir -p Payload
-          cp -R "$APP_PATH" Payload/
-          zip -r -y BBPlayer-unsigned.ipa Payload
-
-          mkdir -p "${GITHUB_WORKSPACE}/dist"
-          mv BBPlayer-unsigned.ipa "${GITHUB_WORKSPACE}/dist/"
-
-      - name: 🚀 上传 IPA 产物
+      - name: 📄 上传编译失败日志 (仅失败时触发)
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: BBPlayer-iOS-Unsigned
-          path: dist/BBPlayer-unsigned.ipa
-          retention-days: 14
+          name: xcodebuild-error-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          retention-days: 7
+
+      - name: 📦 打包未签名 IPA
+        run: |
+          cd apps/mobile/ios
+          mkdir -p Payload
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
+          echo "Found app at: $APP_PATH"
+          cp -r "$APP_PATH" Payload/
+          zip -r -q BBPlayer-unsigned.ipa Payload
+
+      - name: ⬆️ 上传 IPA 产物到 GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: BBPlayer-unsigned-ipa
+          path: apps/mobile/ios/BBPlayer-unsigned.ipa
+          retention-days: 30
