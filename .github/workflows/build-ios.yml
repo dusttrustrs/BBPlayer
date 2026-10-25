@@ -186,6 +186,24 @@ jobs:
           echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
           echo "Calculated VERSION_CODE=$VERSION_CODE"
           cd apps/mobile
+
+          # 关键修复 2：将 react-native-screens 加入 RNRepo iOS 预编译黑名单 (denyList.ios)
+          # 原因：RNRepo 预编译的 RNScreens.xcframework 仅包含文本格式的 .swiftinterface（无二进制 .swiftmodule），
+          # 而 ExpoRouter (Swift) 在 import RNScreens 时会触发 swiftc 的 ModuleInterfaceLoader 启动隔离子编译器，
+          # 该子编译器会强制剥离父进程的所有 -Xcc 参数（包括 -Xcc -ivfsoverlay React-VFS.yaml），导致 RNScreens 伞形头文件报错找不到 <React/RCTEventDispatcherProtocol.h>。
+          # 将 react-native-screens 设为源码编译后，Expo 会将其编译为静态库并生成二进制 RNScreens.swiftmodule，彻底规避 .swiftinterface 子编译问题。
+          node -e '
+            const fs = require("fs");
+            const cfgPath = "rnrepo.config.json";
+            const cfg = fs.existsSync(cfgPath) ? JSON.parse(fs.readFileSync(cfgPath, "utf8")) : {};
+            cfg.denyList = cfg.denyList || {};
+            const iosDeny = new Set(Array.isArray(cfg.denyList.ios) ? cfg.denyList.ios : []);
+            iosDeny.add("react-native-screens");
+            cfg.denyList.ios = Array.from(iosDeny);
+            fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+            console.log("✅ 已配置 apps/mobile/rnrepo.config.json:", JSON.stringify(cfg));
+          '
+
           # 必须带 --no-install，确保在注入 $RNFirebaseDisableSPM 之后再统一执行 pod install
           npx expo prebuild --platform ios --clean --no-install 2>&1 | tee -a "$RUNNER_TEMP/build-ios.log"
 
@@ -195,7 +213,7 @@ jobs:
           export NODE_BINARY=$(command -v node)
           cd apps/mobile/ios
 
-          # 关键修复 2：在 Podfile 顶部安全注入 $RNFirebaseDisableSPM = true（避免用单行 sed 破坏多行语法）
+          # 关键修复 3：在 Podfile 顶部安全注入 $RNFirebaseDisableSPM = true（避免用单行 sed 破坏多行语法）
           grep -q 'RNFirebaseDisableSPM' Podfile || {
             printf '%s\n%s\n' '$RNFirebaseDisableSPM = true' "$(cat Podfile)" > Podfile
           }
@@ -218,12 +236,13 @@ jobs:
             DISABLE_RNREPO=1 pod install 2>&1 | tee -a "$RUNNER_TEMP/build-ios.log"
           fi
 
-          # 关键修复 3：修复 React-Core-prebuilt + useFrameworks: 'static' 在 Release 构建下的两个上游兼容性 Bug：
-          # Bug A: expo-modules-autolinking 的 append_macro_flags 用旧内存 xcconfig 覆盖磁盘文件，
-          #        导致 ExpoRouter / ExpoOrpheus 等依赖 ExpoModulesCore 的 Pod 丢失 React-VFS.yaml 虚拟头文件映射，
-          #        进而使 RNScreens 引用 <React/RCTEventDispatcherProtocol.h> 时报 file not found。
-          # Bug B: xcodebuild Release 阶段执行 replace-rncore-version.js 会删掉并重新解压 React.xcframework，
-          #        把 Expo 在 pod install 阶段移除的 `framework module React` 重新恢复回来，导致模块定义冲突与头文件查找失败。
+          # 关键修复 4：修复 React-Core-prebuilt + useFrameworks: 'static' 在 Release 构建下的头文件与模块映射问题：
+          # 1) 提前将 React-Core-prebuilt 切换至 Release 切片，防止 xcodebuild 阶段 replace-rncore-version.js 重新解压覆盖补丁。
+          # 2) 将 React.xcframework 内部按子模块嵌套的头文件（如 Headers/React_Core/React/*.h、Headers/Yoga/yoga/*.h 等）
+          #    实体化平铺到磁盘上的 React.xcframework/Headers/ 与各切片的 React.framework/Headers/ 中。
+          #    这样即使 swiftc 在编译任何 .swiftinterface 子模块时剥离了 -Xcc -ivfsoverlay 虚拟文件系统参数，
+          #    Clang 也能直接通过 -F (React.framework/Headers/*.h) 和原生 Swift -I 物理路径找到所有 <React/*.h> 与 <yoga/*.h> 头文件。
+          # 3) 补齐被 expo-modules-autolinking 的 append_macro_flags 覆盖丢失的 .xcconfig 编译参数。
           node << 'EOF'
           const fs = require("fs");
           const path = require("path");
@@ -234,9 +253,45 @@ jobs:
           const prebuiltDir = path.join(podsRoot, "React-Core-prebuilt");
           const xcfwDir = path.join(prebuiltDir, "React.xcframework");
 
+          function copyDirRecursive(srcDir, destDir) {
+            let copied = 0;
+            if (!fs.existsSync(srcDir)) return copied;
+            for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+              const srcPath = path.join(srcDir, entry.name);
+              const destPath = path.join(destDir, entry.name);
+              if (entry.isDirectory()) {
+                copied += copyDirRecursive(srcPath, destPath);
+              } else if (entry.isFile() && !fs.existsSync(destPath)) {
+                fs.mkdirSync(destDir, { recursive: true });
+                fs.copyFileSync(srcPath, destPath);
+                copied++;
+              }
+            }
+            return copied;
+          }
+
+          function materializeReactHeaders(headersRoot, isFrameworkSlice) {
+            if (!fs.existsSync(headersRoot)) return 0;
+            let count = 0;
+            const subdirs = fs.readdirSync(headersRoot, { withFileTypes: true }).filter((d) => d.isDirectory());
+            // 将 Headers/<SubspecName>/<ModulePrefix>/... 实体化平铺到 Headers/<ModulePrefix>/...
+            for (const sub of subdirs) {
+              const subPath = path.join(headersRoot, sub.name);
+              count += copyDirRecursive(subPath, headersRoot);
+            }
+            // 对于 React.framework/Headers 切片目录，Clang 通过 -F 查找 `#import <React/Foo.h>` 时
+            // 会直接查找 `React.framework/Headers/Foo.h`，因此同步将 `Headers/React/*` 平铺到 `React.framework/Headers/*`
+            if (isFrameworkSlice) {
+              const reactSubdir = path.join(headersRoot, "React");
+              if (fs.existsSync(reactSubdir)) {
+                count += copyDirRecursive(reactSubdir, headersRoot);
+              }
+            }
+            return count;
+          }
+
           if (fs.existsSync(prebuiltDir)) {
-            // 1. 提前将 React-Core-prebuilt 切换至 Release 切片并写入 .last_build_configuration = "Release"，
-            //    使 xcodebuild 阶段的 replace-rncore-version.js 检测到配置一致直接跳过，不再覆盖补丁
+            // 1. 提前将 React-Core-prebuilt 切换至 Release 切片并写入 .last_build_configuration = "Release"
             const rnPkgPath = require.resolve("react-native/package.json", { paths: [iosDir] });
             const rnDir = path.dirname(rnPkgPath);
             const rnVersion = JSON.parse(fs.readFileSync(rnPkgPath, "utf8")).version;
@@ -262,7 +317,21 @@ jobs:
               console.log(`✅ 已同步更新 Release 版 VFS 映射: ${vfsPath}`);
             }
 
-            // 3. 重新对 Release 版 React.xcframework 应用 Expo 的 modulemap 补丁：
+            // 3. 实体化平铺 React.xcframework 头文件到磁盘，消除对虚拟文件系统 (VFS) 的强依赖
+            let materializedCount = materializeReactHeaders(path.join(xcfwDir, "Headers"), false);
+            if (fs.existsSync(xcfwDir)) {
+              for (const entry of fs.readdirSync(xcfwDir, { withFileTypes: true })) {
+                if (entry.isDirectory()) {
+                  const sliceHeaders = path.join(xcfwDir, entry.name, "React.framework", "Headers");
+                  if (fs.existsSync(sliceHeaders)) {
+                    materializedCount += materializeReactHeaders(sliceHeaders, true);
+                  }
+                }
+              }
+            }
+            console.log(`✅ 已实体化平铺 ${materializedCount} 个 React.xcframework 头文件到物理磁盘`);
+
+            // 4. 重新对 Release 版 React.xcframework 应用 Expo 的 modulemap 补丁：
             //    移除 `framework module React { ... }`（保留 `React_RCTAppDelegate`）
             const fwModuleReactRegex = /framework module React \{[\s\S]*?\n\}\s*/g;
             const modulemapPaths = [path.join(xcfwDir, "Modules", "module.modulemap")];
@@ -285,14 +354,14 @@ jobs:
               }
             }
 
-            // 4. 遍历 Target Support Files 下所有 .xcconfig，补齐被 append_macro_flags 覆盖丢失的 React-VFS.yaml 与 modulemap 参数
+            // 5. 遍历 Target Support Files 下所有 .xcconfig，补齐 React-VFS.yaml、modulemap 以及原生 Swift -I 搜索路径
             const targetSupportDir = path.join(podsRoot, "Target Support Files");
             const useFwModulemap = path.join(targetSupportDir, "React-Core-prebuilt", "React-use-frameworks.modulemap");
             const hasUseFwModulemap = fs.existsSync(useFwModulemap);
 
             if (fs.existsSync(vfsPath) && fs.existsSync(targetSupportDir)) {
               const cVfsFlag = `-ivfsoverlay "${vfsPath}"`;
-              const swiftVfsFlag = `-Xcc -ivfsoverlay -Xcc "${vfsPath}" -Xcc -Wno-incomplete-umbrella`;
+              const swiftVfsFlag = `-I "\${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers" -Xcc -ivfsoverlay -Xcc "${vfsPath}" -Xcc -Wno-incomplete-umbrella`;
               const cUseFwFlags = `-isystem "\${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers" -fmodule-map-file="\${PODS_ROOT}/Target\\ Support\\ Files/React-Core-prebuilt/React-use-frameworks.modulemap"`;
               const swiftUseFwFlags = `-Xcc -isystem -Xcc "\${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers" -Xcc -fmodule-map-file="\${PODS_ROOT}/Target\\ Support\\ Files/React-Core-prebuilt/React-use-frameworks.modulemap"`;
 
@@ -332,7 +401,10 @@ jobs:
                 const sm = content.match(swiftRe);
                 if (sm) {
                   let extra = "";
-                  if (!sm[2].includes("React-VFS.yaml")) extra += ` ${swiftVfsFlag}`;
+                  if (!sm[2].includes("-I \"${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers\"")) {
+                    extra += ` -I "\${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers"`;
+                  }
+                  if (!sm[2].includes("React-VFS.yaml")) extra += ` -Xcc -ivfsoverlay -Xcc "${vfsPath}" -Xcc -Wno-incomplete-umbrella`;
                   if (hasUseFwModulemap && !sm[2].includes("React-use-frameworks.modulemap")) extra += ` ${swiftUseFwFlags}`;
                   if (extra) {
                     content = content.replace(swiftRe, (_, p, v) => `${p}${v}${extra}`);
@@ -349,7 +421,7 @@ jobs:
                   patchedCount++;
                 }
               }
-              console.log(`✅ 已为 ${patchedCount} 个 .xcconfig 补齐 React-VFS.yaml / modulemap 编译参数`);
+              console.log(`✅ 已为 ${patchedCount} 个 .xcconfig 补齐 React-VFS.yaml / modulemap / Swift -I 编译参数`);
             }
           }
           EOF
