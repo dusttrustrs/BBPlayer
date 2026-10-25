@@ -218,6 +218,142 @@ jobs:
             DISABLE_RNREPO=1 pod install 2>&1 | tee -a "$RUNNER_TEMP/build-ios.log"
           fi
 
+          # 关键修复 3：修复 React-Core-prebuilt + useFrameworks: 'static' 在 Release 构建下的两个上游兼容性 Bug：
+          # Bug A: expo-modules-autolinking 的 append_macro_flags 用旧内存 xcconfig 覆盖磁盘文件，
+          #        导致 ExpoRouter / ExpoOrpheus 等依赖 ExpoModulesCore 的 Pod 丢失 React-VFS.yaml 虚拟头文件映射，
+          #        进而使 RNScreens 引用 <React/RCTEventDispatcherProtocol.h> 时报 file not found。
+          # Bug B: xcodebuild Release 阶段执行 replace-rncore-version.js 会删掉并重新解压 React.xcframework，
+          #        把 Expo 在 pod install 阶段移除的 `framework module React` 重新恢复回来，导致模块定义冲突与头文件查找失败。
+          node << 'EOF'
+          const fs = require("fs");
+          const path = require("path");
+          const { execFileSync } = require("child_process");
+
+          const iosDir = process.cwd();
+          const podsRoot = path.join(iosDir, "Pods");
+          const prebuiltDir = path.join(podsRoot, "React-Core-prebuilt");
+          const xcfwDir = path.join(prebuiltDir, "React.xcframework");
+
+          if (fs.existsSync(prebuiltDir)) {
+            // 1. 提前将 React-Core-prebuilt 切换至 Release 切片并写入 .last_build_configuration = "Release"，
+            //    使 xcodebuild 阶段的 replace-rncore-version.js 检测到配置一致直接跳过，不再覆盖补丁
+            const rnPkgPath = require.resolve("react-native/package.json", { paths: [iosDir] });
+            const rnDir = path.dirname(rnPkgPath);
+            const rnVersion = JSON.parse(fs.readFileSync(rnPkgPath, "utf8")).version;
+            const replaceScript = path.join(rnDir, "scripts", "replace-rncore-version.js");
+
+            if (fs.existsSync(replaceScript)) {
+              console.log(`🔄 预切换 React-Core-prebuilt (${rnVersion}) 至 Release 配置...`);
+              execFileSync(
+                process.execPath,
+                [replaceScript, "-c", "Release", "-r", rnVersion, "-p", podsRoot],
+                { cwd: podsRoot, stdio: "inherit" }
+              );
+            }
+
+            // 2. 基于 Release 版 React.xcframework 重新生成 React-VFS.yaml
+            const vfsTemplatePath = path.join(xcfwDir, "React-VFS-template.yaml");
+            const vfsPath = path.join(prebuiltDir, "React-VFS.yaml");
+            if (fs.existsSync(vfsTemplatePath)) {
+              const vfsContent = fs
+                .readFileSync(vfsTemplatePath, "utf8")
+                .replace(/\$\{ROOT_PATH\}/g, () => xcfwDir);
+              fs.writeFileSync(vfsPath, vfsContent, "utf8");
+              console.log(`✅ 已同步更新 Release 版 VFS 映射: ${vfsPath}`);
+            }
+
+            // 3. 重新对 Release 版 React.xcframework 应用 Expo 的 modulemap 补丁：
+            //    移除 `framework module React { ... }`（保留 `React_RCTAppDelegate`）
+            const fwModuleReactRegex = /framework module React \{[\s\S]*?\n\}\s*/g;
+            const modulemapPaths = [path.join(xcfwDir, "Modules", "module.modulemap")];
+            if (fs.existsSync(xcfwDir)) {
+              for (const entry of fs.readdirSync(xcfwDir, { withFileTypes: true })) {
+                if (entry.isDirectory()) {
+                  const sliceMap = path.join(xcfwDir, entry.name, "React.framework", "Modules", "module.modulemap");
+                  if (fs.existsSync(sliceMap)) modulemapPaths.push(sliceMap);
+                }
+              }
+            }
+            for (const mmPath of modulemapPaths) {
+              if (fs.existsSync(mmPath)) {
+                const orig = fs.readFileSync(mmPath, "utf8");
+                const patched = orig.replace(fwModuleReactRegex, "");
+                if (patched !== orig) {
+                  fs.writeFileSync(mmPath, patched, "utf8");
+                  console.log(`✅ 已修补 modulemap (移除 framework module React): ${path.relative(podsRoot, mmPath)}`);
+                }
+              }
+            }
+
+            // 4. 遍历 Target Support Files 下所有 .xcconfig，补齐被 append_macro_flags 覆盖丢失的 React-VFS.yaml 与 modulemap 参数
+            const targetSupportDir = path.join(podsRoot, "Target Support Files");
+            const useFwModulemap = path.join(targetSupportDir, "React-Core-prebuilt", "React-use-frameworks.modulemap");
+            const hasUseFwModulemap = fs.existsSync(useFwModulemap);
+
+            if (fs.existsSync(vfsPath) && fs.existsSync(targetSupportDir)) {
+              const cVfsFlag = `-ivfsoverlay "${vfsPath}"`;
+              const swiftVfsFlag = `-Xcc -ivfsoverlay -Xcc "${vfsPath}" -Xcc -Wno-incomplete-umbrella`;
+              const cUseFwFlags = `-isystem "\${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers" -fmodule-map-file="\${PODS_ROOT}/Target\\ Support\\ Files/React-Core-prebuilt/React-use-frameworks.modulemap"`;
+              const swiftUseFwFlags = `-Xcc -isystem -Xcc "\${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers" -Xcc -fmodule-map-file="\${PODS_ROOT}/Target\\ Support\\ Files/React-Core-prebuilt/React-use-frameworks.modulemap"`;
+
+              function walkXcconfigs(dir, out = []) {
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                  const full = path.join(dir, entry.name);
+                  if (entry.isDirectory()) walkXcconfigs(full, out);
+                  else if (entry.isFile() && entry.name.endsWith(".xcconfig")) out.push(full);
+                }
+                return out;
+              }
+
+              let patchedCount = 0;
+              for (const xcconfigPath of walkXcconfigs(targetSupportDir)) {
+                let content = fs.readFileSync(xcconfigPath, "utf8");
+                let changed = false;
+
+                for (const key of ["OTHER_CFLAGS", "OTHER_CPLUSPLUSFLAGS"]) {
+                  const re = new RegExp(`^(${key}\\s*=\\s*)(.*)$`, "m");
+                  const m = content.match(re);
+                  if (m) {
+                    let extra = "";
+                    if (!m[2].includes("React-VFS.yaml")) extra += ` ${cVfsFlag}`;
+                    if (hasUseFwModulemap && !m[2].includes("React-use-frameworks.modulemap")) extra += ` ${cUseFwFlags}`;
+                    if (extra) {
+                      content = content.replace(re, (_, p, v) => `${p}${v}${extra}`);
+                      changed = true;
+                    }
+                  } else {
+                    const extra = `${cVfsFlag}${hasUseFwModulemap ? " " + cUseFwFlags : ""}`;
+                    content = content.trimEnd() + `\n${key} = $(inherited) ${extra}\n`;
+                    changed = true;
+                  }
+                }
+
+                const swiftRe = /^(OTHER_SWIFT_FLAGS\s*=\s*)(.*)$/m;
+                const sm = content.match(swiftRe);
+                if (sm) {
+                  let extra = "";
+                  if (!sm[2].includes("React-VFS.yaml")) extra += ` ${swiftVfsFlag}`;
+                  if (hasUseFwModulemap && !sm[2].includes("React-use-frameworks.modulemap")) extra += ` ${swiftUseFwFlags}`;
+                  if (extra) {
+                    content = content.replace(swiftRe, (_, p, v) => `${p}${v}${extra}`);
+                    changed = true;
+                  }
+                } else {
+                  const extra = `${swiftVfsFlag}${hasUseFwModulemap ? " " + swiftUseFwFlags : ""}`;
+                  content = content.trimEnd() + `\nOTHER_SWIFT_FLAGS = $(inherited) ${extra}\n`;
+                  changed = true;
+                }
+
+                if (changed) {
+                  fs.writeFileSync(xcconfigPath, content, "utf8");
+                  patchedCount++;
+                }
+              }
+              console.log(`✅ 已为 ${patchedCount} 个 .xcconfig 补齐 React-VFS.yaml / modulemap 编译参数`);
+            }
+          }
+          EOF
+
       - name: 🔨 编译 iOS App (禁用代码签名)
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true" # 禁用 Sentry 符号表自动上传，防止缺少 Token 报错
@@ -235,6 +371,7 @@ jobs:
             -derivedDataPath build \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=NO \
+            CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
