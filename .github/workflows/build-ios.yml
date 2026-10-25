@@ -597,10 +597,11 @@ jobs:
                 "    </Animated.View>"
               ].join("\n");
               overlayCode = overlayCode.replace("import { Pressable, StyleSheet } from 'react-native'", "import { Pressable, StyleSheet, View } from 'react-native'");
-              overlayCode = overlayCode.replace(/import\s*\{\s*createAnimatedComponent,\s*useAnimatedStyle,\s*\}\s*from\s*['"]react-native-reanimated['"]/, "import Animated, {\n  useAnimatedStyle,\n} from 'react-native-reanimated'");
+              overlayCode = overlayCode.replace(/import\s*\{\s*createAnimatedComponent,\s*useAnimatedStyle,\s*\}\s*from\s*['"]react-native-reanimated['"]/, "import Animated, {\n  createAnimatedComponent,\n  useAnimatedStyle,\n} from 'react-native-reanimated'");
+              overlayCode = overlayCode.replace(/const AnimatedPressable = createAnimatedComponent\(Pressable\)\r?\n?/, "");
               overlayCode = overlayCode.replace(overlayPattern, overlayReplacement);
               fs.writeFileSync(overlayPath, overlayCode, "utf8");
-              console.log("✅ 已修复 AnimatedModalOverlay.tsx 遮罩层点击穿透与事件隔离");
+              console.log("✅ 已修复 AnimatedModalOverlay.tsx 遮罩层点击穿透与事件隔离并清理未使用的 AnimatedPressable");
             }
           }
 
@@ -682,7 +683,7 @@ jobs:
             let detail = fs.readFileSync(playlistDetailPath, "utf8");
             const target = "Orpheus.getLruCachedUris(urisToCheck.map((u) => u.uri))";
             const replacement = 'typeof Orpheus.getLruCachedUris === "function" ? Orpheus.getLruCachedUris(urisToCheck.map((u) => u.uri)) : []';
-            if (detail.includes(target)) {
+            if (detail.includes(target) && !detail.includes("typeof Orpheus.getLruCachedUris")) {
               detail = detail.replace(target, replacement);
               fs.writeFileSync(playlistDetailPath, detail, "utf8");
               console.log("✅ 已为 playlist/local/[id].tsx 注入 getLruCachedUris 防御性守卫");
@@ -694,11 +695,31 @@ jobs:
             let hook = fs.readFileSync(localPlayerHookPath, "utf8");
             const target = "Orpheus.getLruCachedUris(urisToCheck.map((u) => u.uri))";
             const replacement = 'typeof Orpheus.getLruCachedUris === "function" ? Orpheus.getLruCachedUris(urisToCheck.map((u) => u.uri)) : []';
-            if (hook.includes(target)) {
+            if (hook.includes(target) && !hook.includes("typeof Orpheus.getLruCachedUris")) {
               hook = hook.replace(target, replacement);
               fs.writeFileSync(localPlayerHookPath, hook, "utf8");
               console.log("✅ 已为 useLocalPlaylistPlayer.ts 注入 getLruCachedUris 防御性守卫");
             }
+          }
+
+          // 8. 防御性修复 expo-router useScreens：防止组件加载返回 undefined 时解构 ErrorBoundary 崩溃
+          try {
+            const routerPkg = require.resolve("expo-router/package.json", { paths: ["apps/mobile"] });
+            const useScreensPath = path.join(path.dirname(routerPkg), "build/useScreens.js");
+            if (fs.existsSync(useScreensPath)) {
+              let screensCode = fs.readFileSync(useScreensPath, "utf8");
+              const screensPattern = /function\s+fromImport\s*\(\s*value\s*,\s*\{\s*ErrorBoundary[\s\S]*?\}\s*\)\s*\{/;
+              if (screensPattern.test(screensCode)) {
+                screensCode = screensCode.replace(
+                  screensPattern,
+                  "function fromImport(value, importResult = {}) { const { ErrorBoundary, SuspenseFallback, unstable_settings, ...component } = (importResult && typeof importResult === 'object') ? importResult : {};"
+                );
+                fs.writeFileSync(useScreensPath, screensCode, "utf8");
+                console.log("✅ 已为 expo-router/useScreens.js 注入 fromImport 防御性参数守卫");
+              }
+            }
+          } catch (e) {
+            console.warn("⚠️ expo-router useScreens 防御修补警告:", e.message);
           }
           EOF
 
