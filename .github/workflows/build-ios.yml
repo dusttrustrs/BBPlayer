@@ -243,11 +243,6 @@ jobs:
               console.log("✅ 已向 app.config.ts 注入 UIAppFonts 与 ExpoShareIntoAppGroupId");
             }
           }
-              );
-              fs.writeFileSync(configPath, cfg, "utf8");
-              console.log("✅ 已向 app.config.ts 注入 UIAppFonts 与 ExpoShareIntoAppGroupId");
-            }
-          }
 
           // 3. 防御性修复 expo-sharing：避免缺失 App Group 时抛出 FailedToResolveAppGroupIdException 导致首页崩溃
           try {
