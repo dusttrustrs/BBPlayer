@@ -140,7 +140,7 @@ jobs:
           fs.writeFileSync(analyzerPath, analyzer, "utf8");
 
           // 2. 修复 ExpoOrpheusModule.swift：
-          // 多语句 .set 闭包无法自动推断泛型参数 $0 的类型，需显式声明 (enabled: Bool) in
+          // (a) 多语句 .set 闭包无法自动推断泛型参数 $0 的类型，需显式声明 (enabled: Bool) in
           const modulePath = "packages/orpheus/ios/ExpoOrpheusModule.swift";
           let mod = fs.readFileSync(modulePath, "utf8");
           const propPattern = /Property\("isSpectrumVisualizerEnabled"\)\s*\.get\s*\{\s*GeneralStorage\.shared\.isSpectrumVisualizerEnabled\s*\}\s*\.set\s*\{\s*GeneralStorage\.shared\.isSpectrumVisualizerEnabled = \$0\s*self\.sendEvent\("onSpectrumVisualizerEnabledChanged", \["enabled": \$0\]\)\s*\}/;
@@ -157,6 +157,24 @@ jobs:
             console.log("✅ 已修复 ExpoOrpheusModule.swift 中的 isSpectrumVisualizerEnabled .set 闭包类型注解");
           } else if (!mod.includes("(enabled: Bool) in")) {
             throw new Error("未在 ExpoOrpheusModule.swift 中找到待修复的 isSpectrumVisualizerEnabled 代码块");
+          }
+
+          // (b) 修复 updateSpectrumData 中不存在的 TypedArray.getUnsafeMutablePointer 方法，
+          // 改用 ExpoModulesCore 标准公开属性 destination.rawPointer.bindMemory(to:capacity:)
+          const spectrumPattern = /Function\("updateSpectrumData"\)\s*\{\s*\(destination:\s*TypedArray\)\s*in[\s\S]*?fillSpectrumData\(destination:\s*ptr,\s*count:\s*count\)\s*\}\s*\}/;
+          if (spectrumPattern.test(mod)) {
+            mod = mod.replace(
+              spectrumPattern,
+          `Function("updateSpectrumData") { (destination: TypedArray) in
+                  let count = destination.length
+                  guard count > 0, destination.byteLength >= count * MemoryLayout<Float32>.stride else { return }
+                  let ptr = destination.rawPointer.bindMemory(to: Float32.self, capacity: count)
+                  AudioSpectrumAnalyzer.shared.fillSpectrumData(destination: ptr, count: count)
+              }`
+            );
+            console.log("✅ 已修复 ExpoOrpheusModule.swift 中的 updateSpectrumData TypedArray 指针调用");
+          } else if (!mod.includes("destination.rawPointer.bindMemory")) {
+            throw new Error("未在 ExpoOrpheusModule.swift 中找到待修复的 updateSpectrumData 代码块");
           }
           fs.writeFileSync(modulePath, mod, "utf8");
           EOF
