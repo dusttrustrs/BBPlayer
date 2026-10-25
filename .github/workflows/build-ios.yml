@@ -200,48 +200,10 @@ jobs:
           }
           fs.writeFileSync(modulePath, mod, "utf8");
 
-          // (d) 为 OrpheusPlayerManager.swift 补充 AVAudioSession mixWithOthers 混音支持
+          // (d) 为 OrpheusPlayerManager.swift 补充 addToEnd / addToNext 的 onQueueChanged 通知
           const playerMgrPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
           if (fs.existsSync(playerMgrPath)) {
             let playerMgr = fs.readFileSync(playerMgrPath, "utf8");
-            if (!playerMgr.includes("setAllowSimultaneousPlayback")) {
-              const setupPattern = /private func setupAudioSession\(\)\s*\{[\s\S]*?NotificationCenter\.default\.addObserver[\s\S]*?\}\s*catch[\s\S]*?\}\s*\}/;
-              if (setupPattern.test(playerMgr)) {
-                const setupReplacement = [
-                  'private var isSimultaneousPlaybackAllowed = false',
-                  '    private var enableSystemMediaControl: Bool = true',
-                  '',
-                  '    func setAllowSimultaneousPlayback(_ enabled: Bool) {',
-                  '        isSimultaneousPlaybackAllowed = enabled',
-                  '        enableSystemMediaControl = !enabled',
-                  '        setupAudioSession()',
-                  '        if enabled {',
-                  '            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil',
-                  '            MPNowPlayingInfoCenter.default().playbackState = .stopped',
-                  '        } else {',
-                  '            updateNowPlayingInfo()',
-                  '        }',
-                  '    }',
-                  '',
-                  '    private func setupAudioSession() {',
-                  '        do {',
-                  '            let session = AVAudioSession.sharedInstance()',
-                  '            let options: AVAudioSession.CategoryOptions = isSimultaneousPlaybackAllowed ? [.mixWithOthers] : []',
-                  '            try session.setCategory(.playback, mode: .default, options: options)',
-                  '            try session.setActive(true)',
-                  '            NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: session)',
-                  '            NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: session)',
-                  '        } catch {',
-                  '',
-                  '        }',
-                  '    }'
-                ].join("\n");
-                playerMgr = playerMgr.replace(setupPattern, setupReplacement);
-                fs.writeFileSync(playerMgrPath, playerMgr, "utf8");
-                console.log("✅ 已为 OrpheusPlayerManager.swift 补充 setAllowSimultaneousPlayback 与 mixWithOthers 混音支持");
-              }
-            }
-
             // 在 addToEnd 和 addToNext 尾部触发 onQueueChanged，确保播放队列实时同步
             if (!playerMgr.includes("// queue sync patched")) {
               playerMgr = playerMgr.replace(
@@ -1017,129 +979,196 @@ jobs:
           const playerMgrPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
           if (fs.existsSync(playerMgrPath)) {
             let playerMgr = fs.readFileSync(playerMgrPath, "utf8");
-            if (!playerMgr.includes("UIApplication.shared.beginReceivingRemoteControlEvents()")) {
-              playerMgr = playerMgr.replace(
-                "private func setupRemoteCommands() {",
-                [
-                  "private func setupRemoteCommands() {",
-                  "        DispatchQueue.main.async {",
-                  "            UIApplication.shared.beginReceivingRemoteControlEvents()",
-                  "        }"
-                ].join("\n")
-              );
+            if (!playerMgr.includes("setAllowSimultaneousPlayback")) {
+              const systemIntegrationPattern = /\/\/ MARK: - System Integration[\s\S]*?(?=private func downloadImage\(url: URL)/;
+              if (systemIntegrationPattern.test(playerMgr)) {
+                const newSystemIntegrationBlock = [
+                  '// MARK: - System Integration',
+                  '    ',
+                  '    private var isSimultaneousPlaybackAllowed = false',
+                  '    private var enableSystemMediaControl: Bool = true',
+                  '',
+                  '    func setAllowSimultaneousPlayback(_ enabled: Bool) {',
+                  '        isSimultaneousPlaybackAllowed = enabled',
+                  '        enableSystemMediaControl = !enabled',
+                  '        setupAudioSession()',
+                  '        if enabled {',
+                  '            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil',
+                  '            MPNowPlayingInfoCenter.default().playbackState = .stopped',
+                  '        } else {',
+                  '            updateNowPlayingInfo()',
+                  '        }',
+                  '    }',
+                  '',
+                  '    private func setupAudioSession() {',
+                  '        do {',
+                  '            let session = AVAudioSession.sharedInstance()',
+                  '            let options: AVAudioSession.CategoryOptions = isSimultaneousPlaybackAllowed ? [.mixWithOthers] : []',
+                  '            try session.setCategory(.playback, mode: .default, options: options)',
+                  '            try session.setActive(true)',
+                  '            NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: session)',
+                  '            NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: session)',
+                  '        } catch {',
+                  '',
+                  '        }',
+                  '    }',
+                  '    ',
+                  '    @objc private func handleInterruption(notification: Notification) {',
+                  '        if isSimultaneousPlaybackAllowed {',
+                  '            return',
+                  '        }',
+                  '        guard let userInfo = notification.userInfo,',
+                  '              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,',
+                  '              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }',
+                  '        ',
+                  '        if type == .began {',
+                  '            DispatchQueue.main.async { [weak self] in',
+                  '                self?.pause()',
+                  '            }',
+                  '        } else if type == .ended {',
+                  '            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {',
+                  '                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)',
+                  '                if options.contains(.shouldResume) {',
+                  '                    DispatchQueue.main.async { [weak self] in',
+                  '                        self?.play()',
+                  '                    }',
+                  '                }',
+                  '            }',
+                  '        }',
+                  '    }',
+                  '    ',
+                  '    private func setupRemoteCommands() {',
+                  '        DispatchQueue.main.async {',
+                  '            UIApplication.shared.beginReceivingRemoteControlEvents()',
+                  '        }',
+                  '        let commandCenter = MPRemoteCommandCenter.shared()',
+                  '        ',
+                  '        commandCenter.togglePlayPauseCommand.isEnabled = true',
+                  '        commandCenter.playCommand.isEnabled = true',
+                  '        commandCenter.pauseCommand.isEnabled = true',
+                  '        commandCenter.nextTrackCommand.isEnabled = true',
+                  '        commandCenter.previousTrackCommand.isEnabled = true',
+                  '        commandCenter.changePlaybackPositionCommand.isEnabled = true',
+                  '        ',
+                  '        commandCenter.togglePlayPauseCommand.addTarget { [weak self] event in',
+                  '            guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return .commandFailed }',
+                  '            if self.isPlaying() {',
+                  '                self.pause()',
+                  '            } else {',
+                  '                self.play()',
+                  '            }',
+                  '            return .success',
+                  '        }',
+                  '        ',
+                  '        commandCenter.playCommand.addTarget { [weak self] event in',
+                  '            guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return .commandFailed }',
+                  '            self.play()',
+                  '            return .success',
+                  '        }',
+                  '        ',
+                  '        commandCenter.pauseCommand.addTarget { [weak self] event in',
+                  '            guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return .commandFailed }',
+                  '            self.pause()',
+                  '            return .success',
+                  '        }',
+                  '        ',
+                  '        commandCenter.nextTrackCommand.addTarget { [weak self] event in',
+                  '            guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return .commandFailed }',
+                  '            self.playNext()',
+                  '            return .success',
+                  '        }',
+                  '        ',
+                  '        commandCenter.previousTrackCommand.addTarget { [weak self] event in',
+                  '            guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return .commandFailed }',
+                  '            self.skipToPrevious()',
+                  '            return .success',
+                  '        }',
+                  '        ',
+                  '        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in',
+                  '            guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return .commandFailed }',
+                  '            if let event = event as? MPChangePlaybackPositionCommandEvent {',
+                  '                self.seek(to: event.positionTime)',
+                  '                return .success',
+                  '            }',
+                  '            return .commandFailed',
+                  '        }',
+                  '    }',
+                  '    ',
+                  '    private func updateNowPlayingInfo() {',
+                  '        guard enableSystemMediaControl && !isSimultaneousPlaybackAllowed else {',
+                  '            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil',
+                  '            MPNowPlayingInfoCenter.default().playbackState = .stopped',
+                  '            return',
+                  '        }',
+                  '        guard let track = getCurrentTrack() else {',
+                  '            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil',
+                  '            MPNowPlayingInfoCenter.default().playbackState = .stopped',
+                  '            return',
+                  '        }',
+                  '        ',
+                  '        var info: [String: Any] = [',
+                  '            MPMediaItemPropertyTitle: track.title ?? "Unknown Title",',
+                  '            MPMediaItemPropertyArtist: track.artist ?? "Unknown Artist",',
+                  '            MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime().seconds,',
+                  '            MPNowPlayingInfoPropertyPlaybackRate: player.rate,',
+                  '            MPNowPlayingInfoPropertyPlaybackQueueIndex: queueManager.getCurrentIndex(),',
+                  '            MPNowPlayingInfoPropertyPlaybackQueueCount: queueManager.getQueueCount()',
+                  '        ]',
+                  '        ',
+                  '        if let duration = track.duration {',
+                  '             info[MPMediaItemPropertyPlaybackDuration] = duration',
+                  '        } else if let playerDuration = player.currentItem?.duration.seconds, !playerDuration.isNaN {',
+                  '             info[MPMediaItemPropertyPlaybackDuration] = playerDuration',
+                  '        }',
+                  '        ',
+                  '        if let artworkUrlStr = track.artwork, let artworkUrl = URL(string: artworkUrlStr) {',
+                  '            downloadImage(url: artworkUrl) { [weak self] image in',
+                  '                guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return }',
+                  '                guard let image = image else { return }',
+                  '                if var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo {',
+                  '                    if currentInfo[MPMediaItemPropertyTitle] as? String == track.title {',
+                  '                         let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }',
+                  '                         currentInfo[MPMediaItemPropertyArtwork] = artwork',
+                  '                         MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo',
+                  '                    }',
+                  '                } else {',
+                  '                    info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }',
+                  '                    MPNowPlayingInfoCenter.default().nowPlayingInfo = info',
+                  '                }',
+                  '            }',
+                  '        }',
+                  '        ',
+                  '        MPNowPlayingInfoCenter.default().nowPlayingInfo = info',
+                  '        MPNowPlayingInfoCenter.default().playbackState = (self.isPlaying() ? .playing : .paused)',
+                  '    }',
+                  '    \n    '
+                ].join("\n");
+                playerMgr = playerMgr.replace(systemIntegrationPattern, newSystemIntegrationBlock);
+              }
+              const playPausePattern = /player\.play\(\)\s*\}\s*func pause\(\)\s*\{\s*player\.pause\(\)\s*\}/;
+              if (playPausePattern.test(playerMgr)) {
+                playerMgr = playerMgr.replace(playPausePattern, [
+                  'setupAudioSession()',
+                  '        player.play()',
+                  '        updateNowPlayingInfo()',
+                  '    }',
+                  '    ',
+                  '    func pause() {',
+                  '        player.pause()',
+                  '        if enableSystemMediaControl && !isSimultaneousPlaybackAllowed {',
+                  '            MPNowPlayingInfoCenter.default().playbackState = .paused',
+                  '        }',
+                  '        updateNowPlayingInfo()',
+                  '    }'
+                ].join("\n"));
+              }
+              const replaceItemPattern = /player\.replaceCurrentItem\(with: item\)/;
+              if (replaceItemPattern.test(playerMgr)) {
+                playerMgr = playerMgr.replace(replaceItemPattern, 'setupAudioSession()\n        player.replaceCurrentItem(with: item)');
+              }
+              fs.writeFileSync(playerMgrPath, playerMgr, "utf8");
+              console.log("✅ 已配置 OrpheusPlayerManager.swift 支持系统灵动岛飞入动画与 NowPlaying 同步");
             }
-            const handleInterruptionRegex = /@objc private func handleInterruption\(notification: Notification\) \{[\s\S]*?type == \.began[\s\S]*?pause\(\)[\s\S]*?play\(\)[\s\S]*?\}\s*?\}/;
-            if (handleInterruptionRegex.test(playerMgr)) {
-              playerMgr = playerMgr.replace(handleInterruptionRegex, [
-                "@objc private func handleInterruption(notification: Notification) {",
-                "        if isSimultaneousPlaybackAllowed {",
-                "            return",
-                "        }",
-                "        guard let userInfo = notification.userInfo,",
-                "              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,",
-                "              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }",
-                "        ",
-                "        if type == .began {",
-                "            DispatchQueue.main.async { [weak self] in",
-                "                self?.pause()",
-                "            }",
-                "        } else if type == .ended {",
-                "            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {",
-                "                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)",
-                "                if options.contains(.shouldResume) {",
-                "                    DispatchQueue.main.async { [weak self] in",
-                "                        self?.play()",
-                "                    }",
-                "                }",
-                "            }",
-                "        }",
-                "    }"
-              ].join("\n"));
-            }
-            const updateNowPlayingRegex = /private func updateNowPlayingInfo\(\) \{[\s\S]*?MPNowPlayingInfoCenter\.default\(\)\.nowPlayingInfo = info[\s\S]*?\}/;
-            if (updateNowPlayingRegex.test(playerMgr)) {
-              playerMgr = playerMgr.replace(updateNowPlayingRegex, [
-                "private func updateNowPlayingInfo() {",
-                "        guard enableSystemMediaControl && !isSimultaneousPlaybackAllowed else {",
-                "            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil",
-                "            MPNowPlayingInfoCenter.default().playbackState = .stopped",
-                "            return",
-                "        }",
-                "        guard let track = getCurrentTrack() else {",
-                "            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil",
-                "            MPNowPlayingInfoCenter.default().playbackState = .stopped",
-                "            return",
-                "        }",
-                "        ",
-                "        var info: [String: Any] = [",
-                "            MPMediaItemPropertyTitle: track.title ?? \"Unknown Title\",",
-                "            MPMediaItemPropertyArtist: track.artist ?? \"Unknown Artist\",",
-                "            MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime().seconds,",
-                "            MPNowPlayingInfoPropertyPlaybackRate: player.rate,",
-                "            MPNowPlayingInfoPropertyPlaybackQueueIndex: queueManager.getCurrentIndex(),",
-                "            MPNowPlayingInfoPropertyPlaybackQueueCount: queueManager.getQueueCount()",
-                "        ]",
-                "        ",
-                "        if let duration = track.duration {",
-                "             info[MPMediaItemPropertyPlaybackDuration] = duration",
-                "        } else if let playerDuration = player.currentItem?.duration.seconds, !playerDuration.isNaN {",
-                "             info[MPMediaItemPropertyPlaybackDuration] = playerDuration",
-                "        }",
-                "        ",
-                "        if let artworkUrlStr = track.artwork, let artworkUrl = URL(string: artworkUrlStr) {",
-                "            downloadImage(url: artworkUrl) { [weak self] image in",
-                "                guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return }",
-                "                guard let image = image else { return }",
-                "                if var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo {",
-                "                    if currentInfo[MPMediaItemPropertyTitle] as? String == track.title {",
-                "                         let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }",
-                "                         currentInfo[MPMediaItemPropertyArtwork] = artwork",
-                "                         MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo",
-                "                    }",
-                "                } else {",
-                "                    info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }",
-                "                    MPNowPlayingInfoCenter.default().nowPlayingInfo = info",
-                "                }",
-                "            }",
-                "        }",
-                "        ",
-                "        MPNowPlayingInfoCenter.default().nowPlayingInfo = info",
-                "        MPNowPlayingInfoCenter.default().playbackState = (self.player.timeControlStatus == .playing || self.player.rate > 0) ? .playing : .paused",
-                "    }"
-              ].join("\n"));
-            }
-            if (!playerMgr.includes("MPNowPlayingInfoCenter.default().playbackState = .paused")) {
-              playerMgr = playerMgr.replace(
-                [
-                  "player.play()",
-                  "    }",
-                  "    ",
-                  "    func pause() {"
-                ].join("\n"),
-                [
-                  "setupAudioSession()",
-                  "        player.play()",
-                  "        updateNowPlayingInfo()",
-                  "    }",
-                  "    ",
-                  "    func pause() {",
-                  "        player.pause()",
-                  "        if enableSystemMediaControl && !isSimultaneousPlaybackAllowed {",
-                  "            MPNowPlayingInfoCenter.default().playbackState = .paused",
-                  "        }",
-                  "        updateNowPlayingInfo()"
-                ].join("\n")
-              );
-              playerMgr = playerMgr.replace(
-                "player.replaceCurrentItem(with: item)",
-                [
-                  "setupAudioSession()",
-                  "        player.replaceCurrentItem(with: item)"
-                ].join("\n")
-              );
-            }
-            fs.writeFileSync(playerMgrPath, playerMgr, "utf8");
-            console.log("✅ 已配置 OrpheusPlayerManager.swift 支持系统灵动岛飞入动画与 NowPlaying 同步");
           }
 
           // 12. 修复歌曲评论区界面 UI 错位与居中对齐：
