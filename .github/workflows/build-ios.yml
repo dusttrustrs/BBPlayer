@@ -25,6 +25,9 @@ jobs:
     # 2) macos-26 默认自带与 Xcode 26.6 完全匹配的 iOS 26.5 Simulator Runtime，actool 编译 Assets.xcassets 不会再报版本不匹配。
     runs-on: macos-26
     timeout-minutes: 60
+    env:
+      APP_VARIANT: production
+      EXPO_NO_TELEMETRY: "1"
 
     steps:
       - name: 🏗️ 检出代码
@@ -86,13 +89,83 @@ jobs:
         run: |
           pnpm install --no-frozen-lockfile
 
+      - name: 🩹 修复 ExpoOrpheus 在 iOS 26 SDK / Swift 6.3 下的编译错误
+        run: |
+          node << 'EOF'
+          const fs = require("fs");
+
+          // 1. 修复 AudioSpectrumAnalyzer.swift：
+          // iOS 26 SDK 为 MTAudioProcessingTapCreate 添加了 CF_RETURNS_RETAINED 注解，
+          // 第 4 个参数从 UnsafeMutablePointer<Unmanaged<MTAudioProcessingTap>?> 变为 UnsafeMutablePointer<MTAudioProcessingTap?>
+          const analyzerPath = "packages/orpheus/ios/AudioSpectrumAnalyzer.swift";
+          let analyzer = fs.readFileSync(analyzerPath, "utf8");
+          const tapPattern = /var tap: Unmanaged<MTAudioProcessingTap>\?[\s\S]*?return tap\?\.takeRetainedValue\(\)\s*\}/;
+          if (tapPattern.test(analyzer)) {
+            analyzer = analyzer.replace(
+              tapPattern,
+          `#if compiler(>=6.2)
+                  var tap: MTAudioProcessingTap?
+                  let err = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PreEffects, &tap)
+                  if err == noErr {
+                      return tap
+                  }
+                  #else
+                  var tap: Unmanaged<MTAudioProcessingTap>?
+                  let err = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PreEffects, &tap)
+                  if err == noErr {
+                      return tap?.takeRetainedValue()
+                  }
+                  #endif`
+            );
+            console.log("✅ 已修复 AudioSpectrumAnalyzer.swift 中的 MTAudioProcessingTapCreate 类型签名");
+          } else if (!analyzer.includes("#if compiler(>=6.2)")) {
+            throw new Error("未在 AudioSpectrumAnalyzer.swift 中找到待修复的 MTAudioProcessingTapCreate 代码块");
+          }
+
+          // 同时消除 DSPSplitComplex 临时指针生命周期告警，避免 Release (-O) 优化下产生悬垂指针隐患
+          const dspPattern = /var splitComplex = DSPSplitComplex\(realp: &realOut, imagp: &imagOut\)\s*vDSP_zvabs\(&splitComplex, 1, &magnitudes, 1, vDSP_Length\(fftSize\)\)/;
+          if (dspPattern.test(analyzer)) {
+            analyzer = analyzer.replace(
+              dspPattern,
+          `realOut.withUnsafeMutableBufferPointer { realPtr in
+                      imagOut.withUnsafeMutableBufferPointer { imagPtr in
+                          guard let realBase = realPtr.baseAddress, let imagBase = imagPtr.baseAddress else { return }
+                          var splitComplex = DSPSplitComplex(realp: realBase, imagp: imagBase)
+                          vDSP_zvabs(&splitComplex, 1, &magnitudes, 1, vDSP_Length(fftSize))
+                      }
+                  }`
+            );
+            console.log("✅ 已修复 AudioSpectrumAnalyzer.swift 中的 DSPSplitComplex 指针作用域");
+          }
+          fs.writeFileSync(analyzerPath, analyzer, "utf8");
+
+          // 2. 修复 ExpoOrpheusModule.swift：
+          // 多语句 .set 闭包无法自动推断泛型参数 $0 的类型，需显式声明 (enabled: Bool) in
+          const modulePath = "packages/orpheus/ios/ExpoOrpheusModule.swift";
+          let mod = fs.readFileSync(modulePath, "utf8");
+          const propPattern = /Property\("isSpectrumVisualizerEnabled"\)\s*\.get\s*\{\s*GeneralStorage\.shared\.isSpectrumVisualizerEnabled\s*\}\s*\.set\s*\{\s*GeneralStorage\.shared\.isSpectrumVisualizerEnabled = \$0\s*self\.sendEvent\("onSpectrumVisualizerEnabledChanged", \["enabled": \$0\]\)\s*\}/;
+          if (propPattern.test(mod)) {
+            mod = mod.replace(
+              propPattern,
+          `Property("isSpectrumVisualizerEnabled")
+                      .get { GeneralStorage.shared.isSpectrumVisualizerEnabled }
+                      .set { (enabled: Bool) in
+                          GeneralStorage.shared.isSpectrumVisualizerEnabled = enabled
+                          self.sendEvent("onSpectrumVisualizerEnabledChanged", ["enabled": enabled])
+                      }`
+            );
+            console.log("✅ 已修复 ExpoOrpheusModule.swift 中的 isSpectrumVisualizerEnabled .set 闭包类型注解");
+          } else if (!mod.includes("(enabled: Bool) in")) {
+            throw new Error("未在 ExpoOrpheusModule.swift 中找到待修复的 isSpectrumVisualizerEnabled 代码块");
+          }
+          fs.writeFileSync(modulePath, mod, "utf8");
+          EOF
+
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
-        env:
-          APP_VARIANT: production
-          EXPO_NO_TELEMETRY: "1"
         run: |
           set -o pipefail
           export VERSION_CODE=$(git rev-list --count HEAD)
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
           echo "Calculated VERSION_CODE=$VERSION_CODE"
           cd apps/mobile
           # 必须带 --no-install，确保在注入 $RNFirebaseDisableSPM 之后再统一执行 pod install
