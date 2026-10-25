@@ -187,6 +187,99 @@ jobs:
           fs.writeFileSync(modulePath, mod, "utf8");
           EOF
 
+      - name: 🩹 修复 iOS 运行时闪退与组件异常 (UIAppFonts 缺失、TabLayout 异常防护与 ExpoSharing 兼容)
+        run: |
+          node << 'EOF'
+          const fs = require("fs");
+          const path = require("path");
+
+          // 1. 修复 TabLayout 模块加载时的同步原生调用异常：
+          // 原代码直接在顶层常量中调用 Icon.getImageSourceSync，若字体初始化稍有延迟或缺失会直接抛出原生未捕获异常，
+          // 导致 Metro require 该文件返回 undefined，Expo Router 解构 ErrorBoundary 崩溃 (Cannot read property 'ErrorBoundary' of undefined)。
+          // 引入 getSafeIcon 防御性封装，在捕获到任何异常时优雅回退为默认图标对象。
+          const layoutPath = "apps/mobile/src/app/(tabs)/_layout.tsx";
+          if (fs.existsSync(layoutPath)) {
+            let layout = fs.readFileSync(layoutPath, "utf8");
+            const iconPattern = /const searchIcon = Icon\.getImageSourceSync\('magnify', 24\)[\s\S]*?const profileIcon = Icon\.getImageSourceSync\('account', 24\) as nonNullableIcon/;
+            if (iconPattern.test(layout)) {
+              const safeIconBlock = [
+                "const getSafeIcon = (glyph: string, size = 24): nonNullableIcon => {",
+                "  try {",
+                "    const icon = Icon.getImageSourceSync(glyph, size) as nonNullableIcon",
+                "    if (icon && icon.uri) return icon",
+                "  } catch (e) {",
+                "    console.warn('[TabLayout] getImageSourceSync failed for ' + glyph, e)",
+                "  }",
+                "  return { uri: '', scale: 1 }",
+                "}",
+                "",
+                "const searchIcon = getSafeIcon('magnify', 24)",
+                "const libraryIcon = getSafeIcon('bookshelf', 24)",
+                "const profileIcon = getSafeIcon('account', 24)"
+              ].join("\n");
+              layout = layout.replace(iconPattern, safeIconBlock);
+              fs.writeFileSync(layoutPath, layout, "utf8");
+              console.log("✅ 已成功为 (tabs)/_layout.tsx 注入安全的 getSafeIcon 异常防护");
+            }
+          }
+
+          // 2. 修复 app.config.ts：声明 UIAppFonts (MaterialDesignIcons.ttf) 与 ExpoShareIntoAppGroupId
+          // 解决 iOS 运行时无法加载字体导致 VectorIcons.mm 抛出 NSException 的根本原因，以及解决 useIncomingShare 缺失 App Group 报错。
+          const configPath = "apps/mobile/app.config.ts";
+          if (fs.existsSync(configPath)) {
+            let cfg = fs.readFileSync(configPath, "utf8");
+            const iosPattern = /(\bios:\s*\{[\r\n\s]*bundleIdentifier:)/;
+            if (iosPattern.test(cfg)) {
+              const iosBlock = [
+                "ios: {",
+                "      infoPlist: {",
+                "        UIAppFonts: ['MaterialDesignIcons.ttf'],",
+                "        ExpoShareIntoAppGroupId: 'group.com.roitium.bbplayer',",
+                "      },",
+                "      bundleIdentifier:"
+              ].join("\n");
+              cfg = cfg.replace(iosPattern, iosBlock);
+              fs.writeFileSync(configPath, cfg, "utf8");
+              console.log("✅ 已向 app.config.ts 注入 UIAppFonts 与 ExpoShareIntoAppGroupId");
+            }
+          }
+              );
+              fs.writeFileSync(configPath, cfg, "utf8");
+              console.log("✅ 已向 app.config.ts 注入 UIAppFonts 与 ExpoShareIntoAppGroupId");
+            }
+          }
+
+          // 3. 防御性修复 expo-sharing：避免缺失 App Group 时抛出 FailedToResolveAppGroupIdException 导致首页崩溃
+          try {
+            const sharePkg = require.resolve("expo-sharing/package.json", { paths: ["apps/mobile"] });
+            const shareDir = path.dirname(sharePkg);
+
+            // 修补 JS 端 useIncomingShare hook：避免顶层 useState(getSharedPayloads()) 同步抛错
+            const hookPath = path.join(shareDir, "build/useIncomingShare.js");
+            if (fs.existsSync(hookPath)) {
+              let hook = fs.readFileSync(hookPath, "utf8");
+              if (hook.includes("useState(getSharedPayloads())")) {
+                hook = hook.replace("useState(getSharedPayloads())", "useState(() => { try { return getSharedPayloads(); } catch (e) { return []; } })");
+                fs.writeFileSync(hookPath, hook, "utf8");
+                console.log("✅ 已修补 expo-sharing/useIncomingShare.js");
+              }
+            }
+
+            // 修补原生端 SharingModule.swift：未配置 App Group 时优雅返回，避免中断执行
+            const swiftPath = path.join(shareDir, "ios/SharingModule.swift");
+            if (fs.existsSync(swiftPath)) {
+              let swift = fs.readFileSync(swiftPath, "utf8");
+              if (swift.includes("throw FailedToResolveAppGroupIdException()")) {
+                swift = swift.replace("throw FailedToResolveAppGroupIdException()", `return Bundle.main.bundleIdentifier.map { "group." + $0 } ?? "group.com.roitium.bbplayer"`);
+                fs.writeFileSync(swiftPath, swift, "utf8");
+                console.log("✅ 已修补 expo-sharing/SharingModule.swift");
+              }
+            }
+          } catch (e) {
+            console.warn("⚠️ expo-sharing 防御修补警告:", e.message);
+          }
+          EOF
+
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
         run: |
           set -o pipefail
@@ -214,6 +307,43 @@ jobs:
 
           # 必须带 --no-install，确保在注入 $RNFirebaseDisableSPM 之后再统一执行 pod install
           npx expo prebuild --platform ios --clean --no-install 2>&1 | tee -a "$RUNNER_TEMP/build-ios.log"
+
+          # 关键修复：确保 Info.plist 中 100% 写入 UIAppFonts 与 ExpoShareIntoAppGroupId
+          node << 'EOF'
+          const fs = require("fs");
+          const path = require("path");
+          const { execSync } = require("child_process");
+
+          function findPlist(dir) {
+            if (!fs.existsSync(dir)) return null;
+            for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, f.name);
+              if (f.name === "Pods" || f.name === "build") continue;
+              if (f.isDirectory()) {
+                const found = findPlist(full);
+                if (found) return found;
+              } else if (f.name === "Info.plist") {
+                return full;
+              }
+            }
+            return null;
+          }
+
+          const plistPath = findPlist("ios") || findPlist("apps/mobile/ios");
+          if (plistPath) {
+            console.log("🔍 检查生成的 Info.plist:", plistPath);
+            const content = fs.readFileSync(plistPath, "utf8");
+            if (!content.includes("MaterialDesignIcons.ttf")) {
+              execSync(`/usr/libexec/PlistBuddy -c "Add :UIAppFonts array" "${plistPath}" 2>/dev/null || true`);
+              execSync(`/usr/libexec/PlistBuddy -c "Add :UIAppFonts:0 string MaterialDesignIcons.ttf" "${plistPath}" 2>/dev/null || true`);
+              console.log("✅ PlistBuddy: 已追加 UIAppFonts (MaterialDesignIcons.ttf)");
+            }
+            if (!content.includes("ExpoShareIntoAppGroupId")) {
+              execSync(`/usr/libexec/PlistBuddy -c "Add :ExpoShareIntoAppGroupId string group.com.roitium.bbplayer" "${plistPath}" 2>/dev/null || true`);
+              console.log("✅ PlistBuddy: 已追加 ExpoShareIntoAppGroupId");
+            }
+          }
+          EOF
 
       - name: 🍎 安装 CocoaPods 依赖
         run: |
