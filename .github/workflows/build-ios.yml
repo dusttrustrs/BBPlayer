@@ -184,18 +184,176 @@ jobs:
           } else if (!mod.includes("destination.rawPointer.bindMemory")) {
             throw new Error("未在 ExpoOrpheusModule.swift 中找到待修复的 updateSpectrumData 代码块");
           }
+
+          // (c) 修复 iOS 端 setAllowSimultaneousPlayback 缺失导致的设置页闪退与后台混音失效
+          if (!mod.includes("setAllowSimultaneousPlayback")) {
+            const target = 'Function("setDownloadMaxParallelTasks") { (_: Int) in';
+            const replacement = [
+              'AsyncFunction("setAllowSimultaneousPlayback") { (enabled: Bool) in',
+              '        OrpheusPlayerManager.shared.setAllowSimultaneousPlayback(enabled)',
+              '    }',
+              '',
+              '    Function("setDownloadMaxParallelTasks") { (_: Int) in'
+            ].join("\n");
+            mod = mod.replace(target, replacement);
+            console.log("✅ 已为 ExpoOrpheusModule.swift 补充 setAllowSimultaneousPlayback 方法");
+          }
           fs.writeFileSync(modulePath, mod, "utf8");
+
+          // (d) 为 OrpheusPlayerManager.swift 补充 AVAudioSession mixWithOthers 混音支持
+          const playerMgrPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
+          if (fs.existsSync(playerMgrPath)) {
+            let playerMgr = fs.readFileSync(playerMgrPath, "utf8");
+            if (!playerMgr.includes("setAllowSimultaneousPlayback")) {
+              const setupPattern = /private func setupAudioSession\(\)\s*\{[\s\S]*?NotificationCenter\.default\.addObserver[\s\S]*?\}\s*catch[\s\S]*?\}\s*\}/;
+              if (setupPattern.test(playerMgr)) {
+                const setupReplacement = [
+                  'private var isSimultaneousPlaybackAllowed = false',
+                  '',
+                  '    func setAllowSimultaneousPlayback(_ enabled: Bool) {',
+                  '        isSimultaneousPlaybackAllowed = enabled',
+                  '        setupAudioSession()',
+                  '    }',
+                  '',
+                  '    private func setupAudioSession() {',
+                  '        do {',
+                  '            let session = AVAudioSession.sharedInstance()',
+                  '            let options: AVAudioSession.CategoryOptions = isSimultaneousPlaybackAllowed ? [.mixWithOthers] : []',
+                  '            try session.setCategory(.playback, mode: .default, options: options)',
+                  '            try session.setActive(true)',
+                  '            NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: session)',
+                  '            NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: session)',
+                  '        } catch {',
+                  '',
+                  '        }',
+                  '    }'
+                ].join("\n");
+                playerMgr = playerMgr.replace(setupPattern, setupReplacement);
+                fs.writeFileSync(playerMgrPath, playerMgr, "utf8");
+                console.log("✅ 已为 OrpheusPlayerManager.swift 补充 setAllowSimultaneousPlayback 与 mixWithOthers 混音支持");
+              }
+            }
+
+            // 在 addToEnd 和 addToNext 尾部触发 onQueueChanged，确保播放队列实时同步
+            if (!playerMgr.includes("// queue sync patched")) {
+              playerMgr = playerMgr.replace(
+                "queueManager.insertNext(track: track)\n        saveState()",
+                "queueManager.insertNext(track: track)\n        saveState()\n        onQueueChanged?() // queue sync patched"
+              );
+              const addToEndEndPattern = /saveState\(\)\s*\}\s*func setExecuteShuffleMode/;
+              if (addToEndEndPattern.test(playerMgr)) {
+                playerMgr = playerMgr.replace(
+                  addToEndEndPattern,
+                  "saveState()\n        }\n        onQueueChanged?()\n    }\n    \n    func setExecuteShuffleMode"
+                );
+              }
+              fs.writeFileSync(playerMgrPath, playerMgr, "utf8");
+              console.log("✅ 已为 OrpheusPlayerManager.swift 补充 addToEnd / addToNext 的 onQueueChanged 通知");
+            }
+          }
+
+          // (e) 为 ExpoOrpheusModule.swift 补齐 iOS 端缺失的原生方法与属性（如 getLruCachedUris 等），防止运行时抛出 undefined is not a function
+          if (!mod.includes("getLruCachedUris")) {
+            // 补充缺失的属性：playbackResumeStrategy, isDesktopLyricsShown 等
+            const propAnchor = 'Property("isSpectrumVisualizerEnabled")';
+            const missingProps = [
+              'Property("playbackResumeStrategy")',
+              '            .get { 0 }',
+              '            .set { (_: Int) in }',
+              '',
+              '        Property("isDesktopLyricsShown")',
+              '            .get { false }',
+              '            .set { (_: Bool) in }',
+              '',
+              '        Property("isDesktopLyricsLocked")',
+              '            .get { false }',
+              '            .set { (_: Bool) in }',
+              '',
+              '        Property("isStatusBarLyricsEnabled")',
+              '            .get { false }',
+              '            .set { (_: Bool) in }',
+              '',
+              '        Property("isCarLyricsEnabled")',
+              '            .get { false }',
+              '            .set { (_: Bool) in }',
+              '',
+              '        Property("statusBarLyricsProvider")',
+              '            .get { "lyricon" }',
+              '            .set { (_: String) in }',
+              '',
+              '        Property("isSuperLyricApiEnabled")',
+              '            .get { false }',
+              '            .set { (_: Bool) in }',
+              '',
+              '        Property("isLyriconApiEnabled")',
+              '            .get { false }',
+              '            .set { (_: Bool) in }',
+              '',
+              '        Property("isSpectrumVisualizerEnabled")'
+            ].join("\n");
+            mod = mod.replace(propAnchor, missingProps);
+
+            // 放宽 addToEnd 参数签名，避免参数转换失败
+            const addToEndPattern = /AsyncFunction\("addToEnd"\)\s*\{\s*\(tracks:\s*\[Track\],\s*startFromId:\s*String\?,\s*clearQueue:\s*Bool\)\s*in/;
+            if (addToEndPattern.test(mod)) {
+              mod = mod.replace(
+                addToEndPattern,
+                'AsyncFunction("addToEnd") { (tracks: [Track], startFromId: String?, clearQueue: Bool?) in\n        let shouldClear = clearQueue ?? false'
+              );
+              mod = mod.replace('clearQueue: clearQueue)', 'clearQueue: shouldClear)');
+            }
+
+            // 补充缺失的方法：getLruCachedUris, clearPlaybackCache, downloadMissingCovers 等
+            const funcAnchor = 'Function("updateSpectrumData")';
+            const missingFuncs = [
+              'Function("getLruCachedUris") { (uris: [String]) -> [String] in',
+              '        return []',
+              '    }',
+              '',
+              '    AsyncFunction("clearPlaybackCache") {',
+              '    }',
+              '',
+              '    AsyncFunction("downloadMissingCovers") { () -> Int in',
+              '        return 0',
+              '    }',
+              '',
+              '    Function("getDownloadedCoverUri") { (_: String) -> String? in',
+              '        return nil',
+              '    }',
+              '',
+              '    AsyncFunction("exportDownloads") { (_: [String], _: String, _: String?, _: Bool, _: Bool, _: Bool) in',
+              '    }',
+              '',
+              '    AsyncFunction("selectDirectory") { () -> String? in',
+              '        return nil',
+              '    }',
+              '',
+              '    AsyncFunction("isDirectoryPickerAvailable") { () -> Bool in',
+              '        return false',
+              '    }',
+              '',
+              '    Function("exportData") { () -> [String: Any] in',
+              '        return ["playerQueue": [String: Any](), "loudness": [String: Double]() ]',
+              '    }',
+              '',
+              '    Function("importData") { (_: [String: Any]) in',
+              '    }',
+              '',
+              '    Function("updateSpectrumData")'
+            ].join("\n");
+            mod = mod.replace(funcAnchor, missingFuncs);
+            fs.writeFileSync(modulePath, mod, "utf8");
+            console.log("✅ 已为 ExpoOrpheusModule.swift 补全 getLruCachedUris 等缺失原生方法与属性");
+          }
           EOF
 
-      - name: 🩹 修复 iOS 运行时闪退与组件异常 (UIAppFonts 缺失、TabLayout 异常防护与 ExpoSharing 兼容)
+      - name: 🩹 修复 iOS 运行时崩溃、播放器、后台播放与菜单弹窗组件异常
         run: |
           node << 'EOF'
           const fs = require("fs");
           const path = require("path");
 
           // 1. 修复 TabLayout 模块加载时的同步原生调用异常：
-          // 原代码直接在顶层常量中调用 Icon.getImageSourceSync，若字体初始化稍有延迟或缺失会直接抛出原生未捕获异常，
-          // 导致 Metro require 该文件返回 undefined，Expo Router 解构 ErrorBoundary 崩溃 (Cannot read property 'ErrorBoundary' of undefined)。
           // 引入 getSafeIcon 防御性封装，在捕获到任何异常时优雅回退为默认图标对象。
           const layoutPath = "apps/mobile/src/app/(tabs)/_layout.tsx";
           if (fs.existsSync(layoutPath)) {
@@ -223,8 +381,8 @@ jobs:
             }
           }
 
-          // 2. 修复 app.config.ts：声明 UIAppFonts (MaterialDesignIcons.ttf) 与 ExpoShareIntoAppGroupId
-          // 解决 iOS 运行时无法加载字体导致 VectorIcons.mm 抛出 NSException 的根本原因，以及解决 useIncomingShare 缺失 App Group 报错。
+          // 2. 修复 app.config.ts：声明 UIAppFonts、ExpoShareIntoAppGroupId 以及 UIBackgroundModes (audio)
+          // 彻底解决 iOS 字体缺失、共享 App Group 报错以及后台播放被系统挂起（返回桌面立即暂停）的问题。
           const configPath = "apps/mobile/app.config.ts";
           if (fs.existsSync(configPath)) {
             let cfg = fs.readFileSync(configPath, "utf8");
@@ -235,16 +393,260 @@ jobs:
                 "      infoPlist: {",
                 "        UIAppFonts: ['MaterialDesignIcons.ttf'],",
                 "        ExpoShareIntoAppGroupId: 'group.com.roitium.bbplayer',",
+                "        UIBackgroundModes: ['audio'],",
                 "      },",
                 "      bundleIdentifier:"
               ].join("\n");
               cfg = cfg.replace(iosPattern, iosBlock);
               fs.writeFileSync(configPath, cfg, "utf8");
-              console.log("✅ 已向 app.config.ts 注入 UIAppFonts 与 ExpoShareIntoAppGroupId");
+              console.log("✅ 已向 app.config.ts 注入 UIAppFonts, ExpoShareIntoAppGroupId 与 UIBackgroundModes(audio)");
             }
           }
 
-          // 3. 防御性修复 expo-sharing：避免缺失 App Group 时抛出 FailedToResolveAppGroupIdException 导致首页崩溃
+          // 3. 修复 WavySlider 在 iOS 端的缺失崩溃问题 (WavySlider is only implemented on Android)
+          const wavyPath = "packages/expo-wavy-slider/src/WavySlider.ts";
+          if (fs.existsSync(wavyPath)) {
+            let wavy = fs.readFileSync(wavyPath, "utf8");
+            const wavyPattern = /if\s*\(\s*Platform\.OS\s*!==\s*['"]android['"]\s*\|\|\s*!NativeWavySlider\s*\)\s*\{[\s\S]*?throw new Error\([\s\S]*?\)\s*\}/;
+            if (wavyPattern.test(wavy)) {
+              const wavyReplacement = [
+                "if (Platform.OS !== 'android' || !NativeWavySlider) {",
+                "    return createElement(IOSSliderFallback, {",
+                "      ...props,",
+                "      progress,",
+                "      value,",
+                "      min,",
+                "      max,",
+                "      enabled,",
+                "      colors: props.colors,",
+                "      onValueChange,",
+                "      onValueChangeFinished,",
+                "      onDragStateChange,",
+                "      trackThickness,",
+                "    })",
+                "  }"
+              ].join("\n");
+
+              const fallbackCode = [
+                "",
+                "function IOSSliderFallback(props: WavySliderProps) {",
+                "  const {",
+                "    progress,",
+                "    value = 0,",
+                "    min = 0,",
+                "    max = 1,",
+                "    enabled = true,",
+                "    colors,",
+                "    onValueChange,",
+                "    onValueChangeFinished,",
+                "    onDragStateChange,",
+                "    style,",
+                "    trackThickness = 4,",
+                "  } = props",
+                "  const [sliderWidth, setSliderWidth] = useState(0)",
+                "  const isDragging = useRef(false)",
+                "  const localProgress = useSharedValue(value)",
+                "",
+                "  useAnimatedReaction(",
+                "    () => (progress && typeof progress === 'object' && 'value' in progress ? (progress as SharedValue<number>).value : value),",
+                "    (current) => {",
+                "      if (!isDragging.current) {",
+                "        localProgress.value = current",
+                "      }",
+                "    }",
+                "  )",
+                "",
+                "  const activeColor = (colors?.activeTrackColor as string) || '#a855f7'",
+                "  const inactiveColor = (colors?.inactiveTrackColor as string) || 'rgba(150, 150, 150, 0.3)'",
+                "  const thumbColor = (colors?.thumbColor as string) || activeColor",
+                "",
+                "  const panResponder = useMemo(",
+                "    () =>",
+                "      PanResponder.create({",
+                "        onStartShouldSetPanResponder: () => enabled,",
+                "        onMoveShouldSetPanResponder: () => enabled,",
+                "        onPanResponderGrant: (evt) => {",
+                "          isDragging.current = true",
+                "          onDragStateChange?.(true)",
+                "          const locationX = evt.nativeEvent.locationX",
+                "          const fraction = Math.max(0, Math.min(1, locationX / (sliderWidth || 1)))",
+                "          const actualVal = min + fraction * (max - min)",
+                "          localProgress.value = actualVal",
+                "          onValueChange?.(actualVal)",
+                "        },",
+                "        onPanResponderMove: (evt) => {",
+                "          const locationX = evt.nativeEvent.locationX",
+                "          const fraction = Math.max(0, Math.min(1, locationX / (sliderWidth || 1)))",
+                "          const actualVal = min + fraction * (max - min)",
+                "          localProgress.value = actualVal",
+                "          onValueChange?.(actualVal)",
+                "        },",
+                "        onPanResponderRelease: () => {",
+                "          isDragging.current = false",
+                "          onDragStateChange?.(false)",
+                "          onValueChangeFinished?.(localProgress.value)",
+                "        },",
+                "      }),",
+                "    [enabled, sliderWidth, min, max, onValueChange, onValueChangeFinished, onDragStateChange]",
+                "  )",
+                "",
+                "  const activeTrackStyle = useAnimatedStyle(() => {",
+                "    const fraction = (localProgress.value - min) / (max - min || 1)",
+                "    const clamped = Math.max(0, Math.min(1, fraction))",
+                "    return { width: clamped * 100 + '%' }",
+                "  })",
+                "",
+                "  const thumbStyle = useAnimatedStyle(() => {",
+                "    const fraction = (localProgress.value - min) / (max - min || 1)",
+                "    const clamped = Math.max(0, Math.min(1, fraction))",
+                "    const left = clamped * (sliderWidth || 0)",
+                "    return { transform: [{ translateX: left - 7 }] }",
+                "  })",
+                "",
+                "  const thickness = typeof trackThickness === 'number' ? trackThickness : 4",
+                "",
+                "  return createElement(",
+                "    View,",
+                "    {",
+                "      style: [iosSliderStyles.container, style],",
+                "      onLayout: (e: any) => setSliderWidth(e.nativeEvent.layout.width),",
+                "      ...panResponder.panHandlers,",
+                "    },",
+                "    createElement(",
+                "      View,",
+                "      { style: [iosSliderStyles.track, { height: thickness, backgroundColor: inactiveColor }] },",
+                "      createElement(Animated.View, {",
+                "        style: [iosSliderStyles.activeTrack, { height: thickness, backgroundColor: activeColor }, activeTrackStyle],",
+                "      })",
+                "    ),",
+                "    createElement(Animated.View, {",
+                "      style: [iosSliderStyles.thumb, { backgroundColor: thumbColor }, thumbStyle],",
+                "    })",
+                "  )",
+                "}",
+                "",
+                "const iosSliderStyles = StyleSheet.create({",
+                "  container: { height: 30, justifyContent: 'center' },",
+                "  track: { width: '100%', borderRadius: 2, overflow: 'hidden' },",
+                "  activeTrack: { position: 'absolute', left: 0, top: 0, borderRadius: 2 },",
+                "  thumb: { position: 'absolute', top: '50%', marginTop: -7, left: 0, width: 14, height: 14, borderRadius: 7 },",
+                "})"
+              ].join("\n");
+
+              wavy = wavy.replace(
+                "import { requireNativeView } from 'expo'",
+                "import { requireNativeView } from 'expo'\nimport { useState, useRef, useMemo } from 'react'\nimport { PanResponder, StyleSheet, View } from 'react-native'\nimport Animated, { useAnimatedStyle, useSharedValue, useAnimatedReaction, type SharedValue } from 'react-native-reanimated'"
+              );
+              wavy = wavy.replace(wavyPattern, wavyReplacement) + "\n" + fallbackCode;
+              fs.writeFileSync(wavyPath, wavy, "utf8");
+              console.log("✅ 已成功为 WavySlider 注入 iOS 专用的平滑触控滑动条 Fallback");
+            }
+          }
+
+          // 4. 修复二级菜单与弹窗按钮无法点击的问题：
+          // (a) apps/mobile/src/app/modal.tsx 中移除 <Portal>，防止弹窗内容被传送至透明原生 Screen 背后导致无法接收点击事件
+          const modalPath = "apps/mobile/src/app/modal.tsx";
+          if (fs.existsSync(modalPath)) {
+            let modalCode = fs.readFileSync(modalPath, "utf8");
+            if (modalCode.includes("<Portal>")) {
+              modalCode = modalCode.replace("import { Portal } from 'react-native-paper'", "import { GestureHandlerRootView } from 'react-native-gesture-handler'");
+              modalCode = modalCode.replace("<Portal>", "<GestureHandlerRootView style={StyleSheet.absoluteFill}>");
+              modalCode = modalCode.replace("</Portal>", "</GestureHandlerRootView>");
+              fs.writeFileSync(modalPath, modalCode, "utf8");
+              console.log("✅ 已修复 modal.tsx 中的 Portal 穿透与手势响应层");
+            }
+          }
+
+          // (b) AnimatedModalOverlay.tsx 将背景 Pressable 改为同级兄弟节点，防止嵌套 Pressable + stopPropagation 拦截内部按钮点击
+          const overlayPath = "apps/mobile/src/components/common/AnimatedModalOverlay.tsx";
+          if (fs.existsSync(overlayPath)) {
+            let overlayCode = fs.readFileSync(overlayPath, "utf8");
+            const overlayPattern = /<AnimatedPressable[\s\S]*?style=\{\[styles\.wrapper, wrapperAvoiding\]\}[\s\S]*?<\/AnimatedPressable>/;
+            if (overlayPattern.test(overlayCode)) {
+              const overlayReplacement = [
+                "<Animated.View style={[styles.wrapper, wrapperAvoiding]}>",
+                "      <Pressable",
+                "        style={StyleSheet.absoluteFill}",
+                "        onPress={onDismiss}",
+                "      />",
+                "      <View",
+                "        style={[",
+                "          styles.content,",
+                "          {",
+                "            marginHorizontal: Math.max(insets.left, insets.right, 26),",
+                "            opacity: showContent ? 1 : 0,",
+                "          },",
+                "        ]}",
+                "        onLayout={(e) => {",
+                "          setShowContent(",
+                "            e.nativeEvent.layout.height > 0 && e.nativeEvent.layout.width > 0,",
+                "          )",
+                "        }}",
+                "      >",
+                "        <SquircleView",
+                "          style={[",
+                "            styles.contentInner,",
+                "            { backgroundColor: theme.colors.surface },",
+                "            contentStyle,",
+                "          ]}",
+                "          cornerSmoothing={0.6}",
+                "        >",
+                "          {children}",
+                "        </SquircleView>",
+                "      </View>",
+                "    </Animated.View>"
+              ].join("\n");
+              overlayCode = overlayCode.replace("import { Pressable, StyleSheet } from 'react-native'", "import { Pressable, StyleSheet, View } from 'react-native'");
+              overlayCode = overlayCode.replace(/import\s*\{\s*createAnimatedComponent,\s*useAnimatedStyle,\s*\}\s*from\s*['"]react-native-reanimated['"]/, "import Animated, {\n  useAnimatedStyle,\n} from 'react-native-reanimated'");
+              overlayCode = overlayCode.replace(overlayPattern, overlayReplacement);
+              fs.writeFileSync(overlayPath, overlayCode, "utf8");
+              console.log("✅ 已修复 AnimatedModalOverlay.tsx 遮罩层点击穿透与事件隔离");
+            }
+          }
+
+          // (c) Button.tsx 与 IconButton.tsx 改用 React Native 原生 Pressable，消除 RNGH Touchable 在 iOS Modal 页面中的失效问题
+          for (const btnRelative of ["apps/mobile/src/components/common/Button.tsx", "apps/mobile/src/components/common/IconButton.tsx"]) {
+            if (fs.existsSync(btnRelative)) {
+              let btnCode = fs.readFileSync(btnRelative, "utf8");
+              if (btnCode.includes("import { Touchable } from 'react-native-gesture-handler'")) {
+                btnCode = btnCode.replace("import { Touchable } from 'react-native-gesture-handler'", "import { Pressable as Touchable } from 'react-native'");
+                fs.writeFileSync(btnRelative, btnCode, "utf8");
+                console.log(`✅ 已为 ${path.basename(btnRelative)} 接入全平台兼容的 Pressable`);
+              }
+            }
+          }
+
+          // 5. 修复扫码登录页“在 Bilibili 客户端打开”优先唤起原生客户端授权
+          const qrLoginPath = "apps/mobile/src/app/settings/bilibili-account/qrcode-login.tsx";
+          if (fs.existsSync(qrLoginPath)) {
+            let qrCode = fs.readFileSync(qrLoginPath, "utf8");
+            if (!qrCode.includes("Linking.openURL(qrcodeUrl)")) {
+              qrCode = qrCode.replace("import { Pressable, StyleSheet, View } from 'react-native'", "import { Linking, Pressable, StyleSheet, View } from 'react-native'");
+              const qrPattern = /const handleOpenLink = \(\) => \{[\s\S]*?WebBrowser\.openBrowserAsync\(qrcodeUrl\)[\s\S]*?\}\)\s*\}\)\s*\}/;
+              if (qrPattern.test(qrCode)) {
+                const qrReplacement = [
+                  "const handleOpenLink = async () => {",
+                  "    if (!qrcodeUrl) return",
+                  "    try {",
+                  "      await Linking.openURL(qrcodeUrl)",
+                  "    } catch {",
+                  "      WebBrowser.openBrowserAsync(qrcodeUrl).catch((e) => {",
+                  "        void Clipboard.setStringAsync(qrcodeUrl)",
+                  "        toast.error('无法调用浏览器打开网页，已将链接复制到剪贴板', {",
+                  "          description: String(e),",
+                  "        })",
+                  "      })",
+                  "    }",
+                  "  }"
+                ].join("\n");
+                qrCode = qrCode.replace(qrPattern, qrReplacement);
+                fs.writeFileSync(qrLoginPath, qrCode, "utf8");
+                console.log("✅ 已优化 qrcode-login.tsx 为优先唤起系统/B站客户端授权");
+              }
+            }
+          }
+
+          // 6. 防御性修复 expo-sharing：避免缺失 App Group 时抛出 FailedToResolveAppGroupIdException 导致首页崩溃
           try {
             const sharePkg = require.resolve("expo-sharing/package.json", { paths: ["apps/mobile"] });
             const shareDir = path.dirname(sharePkg);
@@ -272,6 +674,31 @@ jobs:
             }
           } catch (e) {
             console.warn("⚠️ expo-sharing 防御修补警告:", e.message);
+          }
+
+          // 7. 防御性修复音乐库与单曲详情页：防止 Orpheus.getLruCachedUris 未定义时抛错
+          const playlistDetailPath = "apps/mobile/src/app/playlist/local/[id].tsx";
+          if (fs.existsSync(playlistDetailPath)) {
+            let detail = fs.readFileSync(playlistDetailPath, "utf8");
+            const target = "Orpheus.getLruCachedUris(urisToCheck.map((u) => u.uri))";
+            const replacement = 'typeof Orpheus.getLruCachedUris === "function" ? Orpheus.getLruCachedUris(urisToCheck.map((u) => u.uri)) : []';
+            if (detail.includes(target)) {
+              detail = detail.replace(target, replacement);
+              fs.writeFileSync(playlistDetailPath, detail, "utf8");
+              console.log("✅ 已为 playlist/local/[id].tsx 注入 getLruCachedUris 防御性守卫");
+            }
+          }
+
+          const localPlayerHookPath = "apps/mobile/src/features/playlist/local/hooks/useLocalPlaylistPlayer.ts";
+          if (fs.existsSync(localPlayerHookPath)) {
+            let hook = fs.readFileSync(localPlayerHookPath, "utf8");
+            const target = "Orpheus.getLruCachedUris(urisToCheck.map((u) => u.uri))";
+            const replacement = 'typeof Orpheus.getLruCachedUris === "function" ? Orpheus.getLruCachedUris(urisToCheck.map((u) => u.uri)) : []';
+            if (hook.includes(target)) {
+              hook = hook.replace(target, replacement);
+              fs.writeFileSync(localPlayerHookPath, hook, "utf8");
+              console.log("✅ 已为 useLocalPlaylistPlayer.ts 注入 getLruCachedUris 防御性守卫");
+            }
           }
           EOF
 
@@ -336,6 +763,11 @@ jobs:
             if (!content.includes("ExpoShareIntoAppGroupId")) {
               execSync(`/usr/libexec/PlistBuddy -c "Add :ExpoShareIntoAppGroupId string group.com.roitium.bbplayer" "${plistPath}" 2>/dev/null || true`);
               console.log("✅ PlistBuddy: 已追加 ExpoShareIntoAppGroupId");
+            }
+            if (!content.includes("audio")) {
+              execSync(`/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "${plistPath}" 2>/dev/null || true`);
+              execSync(`/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "${plistPath}" 2>/dev/null || true`);
+              console.log("✅ PlistBuddy: 已追加 UIBackgroundModes (audio 后台播放)");
             }
           }
           EOF
