@@ -949,25 +949,64 @@ jobs:
             if (!playerMgr.includes("UIApplication.shared.beginReceivingRemoteControlEvents()")) {
               playerMgr = playerMgr.replace(
                 "private func setupRemoteCommands() {",
-                "private func setupRemoteCommands() {\n        DispatchQueue.main.async {\n            UIApplication.shared.beginReceivingRemoteControlEvents()\n        }"
+                [
+                  "private func setupRemoteCommands() {",
+                  "        DispatchQueue.main.async {",
+                  "            UIApplication.shared.beginReceivingRemoteControlEvents()",
+                  "        }"
+                ].join("\n")
               );
             }
             if (!playerMgr.includes("MPNowPlayingInfoCenter.default().playbackState")) {
               playerMgr = playerMgr.replace(
-                "MPNowPlayingInfoCenter.default().nowPlayingInfo = info\n    }",
-                "MPNowPlayingInfoCenter.default().nowPlayingInfo = info\n        MPNowPlayingInfoCenter.default().playbackState = (self.player.timeControlStatus == .playing || self.player.rate > 0) ? .playing : .paused\n    }"
+                [
+                  "MPNowPlayingInfoCenter.default().nowPlayingInfo = info",
+                  "    }"
+                ].join("\n"),
+                [
+                  "MPNowPlayingInfoCenter.default().nowPlayingInfo = info",
+                  "        MPNowPlayingInfoCenter.default().playbackState = (self.player.timeControlStatus == .playing || self.player.rate > 0) ? .playing : .paused",
+                  "    }"
+                ].join("\n")
               );
               playerMgr = playerMgr.replace(
-                "player.play()\n    }\n    \n    func pause() {",
-                "setupAudioSession()\n        player.play()\n        updateNowPlayingInfo()\n    }\n    \n    func pause() {\n        player.pause()\n        MPNowPlayingInfoCenter.default().playbackState = .paused\n        updateNowPlayingInfo()"
+                [
+                  "player.play()",
+                  "    }",
+                  "    ",
+                  "    func pause() {"
+                ].join("\n"),
+                [
+                  "setupAudioSession()",
+                  "        player.play()",
+                  "        updateNowPlayingInfo()",
+                  "    }",
+                  "    ",
+                  "    func pause() {",
+                  "        player.pause()",
+                  "        MPNowPlayingInfoCenter.default().playbackState = .paused",
+                  "        updateNowPlayingInfo()"
+                ].join("\n")
               );
               playerMgr = playerMgr.replace(
                 "player.replaceCurrentItem(with: item)",
-                "setupAudioSession()\n        player.replaceCurrentItem(with: item)"
+                [
+                  "setupAudioSession()",
+                  "        player.replaceCurrentItem(with: item)"
+                ].join("\n")
               );
               playerMgr = playerMgr.replace(
-                "player.play()\n        \n\n    }",
-                "player.play()\n        updateNowPlayingInfo()\n    }"
+                [
+                  "player.play()",
+                  "        ",
+                  "",
+                  "    }"
+                ].join("\n"),
+                [
+                  "player.play()",
+                  "        updateNowPlayingInfo()",
+                  "    }"
+                ].join("\n")
               );
             }
             fs.writeFileSync(playerMgrPath, playerMgr, "utf8");
@@ -979,28 +1018,28 @@ jobs:
           const commentsBvidPath = "apps/mobile/src/app/comments/[bvid].tsx";
           if (fs.existsSync(commentsBvidPath)) {
             let bvidCode = fs.readFileSync(commentsBvidPath, "utf8");
-            bvidCode = bvidCode.replace(
-              /<Appbar\.Header elevated>[\s\S]*?<\/Appbar\.Header>/,
-              `<Appbar.Header elevated>
-				<Appbar.BackAction onPress={() => router.back()} />
-				<Appbar.Content title={'评论区'} titleStyle={{ textAlign: 'center' }} />
-				<Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />
-			</Appbar.Header>`
-            );
+            const newCommentsHeader = [
+              "<Appbar.Header elevated>",
+              "    <Appbar.BackAction onPress={() => router.back()} />",
+              "    <Appbar.Content title={'评论区'} titleStyle={{ textAlign: 'center' }} />",
+              "    <Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />",
+              "</Appbar.Header>"
+            ].join("\n");
+            bvidCode = bvidCode.replace(/<Appbar\.Header elevated>[\s\S]*?<\/Appbar\.Header>/, newCommentsHeader);
             fs.writeFileSync(commentsBvidPath, bvidCode, "utf8");
             console.log("✅ 已修复 [bvid].tsx 评论区返回按钮左对齐与标题居中");
           }
           const commentsReplyPath = "apps/mobile/src/app/comments/reply.tsx";
           if (fs.existsSync(commentsReplyPath)) {
             let replyCode = fs.readFileSync(commentsReplyPath, "utf8");
-            replyCode = replyCode.replace(
-              /<Appbar\.Header elevated>[\s\S]*?<\/Appbar\.Header>/,
-              `<Appbar.Header elevated>
-				<Appbar.BackAction onPress={() => router.back()} />
-				<Appbar.Content title={'评论区'} titleStyle={{ textAlign: 'center' }} />
-				<Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />
-			</Appbar.Header>`
-            );
+            const newReplyHeader = [
+              "<Appbar.Header elevated>",
+              "    <Appbar.BackAction onPress={() => router.back()} />",
+              "    <Appbar.Content title={'评论区'} titleStyle={{ textAlign: 'center' }} />",
+              "    <Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />",
+              "</Appbar.Header>"
+            ].join("\n");
+            replyCode = replyCode.replace(/<Appbar\.Header elevated>[\s\S]*?<\/Appbar\.Header>/, newReplyHeader);
             fs.writeFileSync(commentsReplyPath, replyCode, "utf8");
             console.log("✅ 已修复 reply.tsx 评论回复返回按钮左对齐与标题居中");
           }
@@ -1010,71 +1049,71 @@ jobs:
           const collPagePath = "apps/mobile/src/app/playlist/remote/collection/[id].tsx";
           if (fs.existsSync(collPagePath)) {
             let collCode = fs.readFileSync(collPagePath, "utf8");
-            collCode = collCode.replace(
-              /<Appbar\.Header[\s\S]*?<\/Appbar\.Header>/,
-              `<Appbar.Header
-				elevated
-				style={{ backgroundColor: 'transparent' }}
-			>
-				<Appbar.BackAction
-					onPress={() => {
-						if (selectMode) {
-							setSelectMode(false)
-							setSelected(new Set())
-						} else {
-							router.back()
-						}
-					}}
-				/>
-				<Appbar.Content
-					title={
-						selectMode
-							? \`已选择\\u2009\${selected.size}\\u2009首\`
-							: collectionData.info.title
-					}
-					titleStyle={!selectMode ? { textAlign: 'center' } : undefined}
-					onPress={handleDoubleTap}
-				/>
-				{selectMode ? (
-					<>
-						<Appbar.Action
-							icon='select-all'
-							onPress={() => setSelected(new Set(tracks.map((t) => t.id)))}
-						/>
-						<Appbar.Action
-							icon='select-compare'
-							onPress={() =>
-								setSelected(
-									new Set(
-										tracks.filter((t) => !selected.has(t.id)).map((t) => t.id),
-									),
-								)
-							}
-						/>
-						<Appbar.Action
-							icon='playlist-plus'
-							onPress={() => {
-								const payloads = []
-								for (const selectedId of selected) {
-									const track = tracks.find((t) => t.id === selectedId)
-									if (track) {
-										payloads.push({
-											track: track as Track,
-											artist: track.artist!,
-										})
-									}
-								}
-								openModal('BatchAddTracksToLocalPlaylist', {
-									payloads,
-								})
-							}}
-						/>
-					</>
-				) : (
-					<Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />
-				)}
-			</Appbar.Header>`
-            );
+            const newCollHeader = [
+              "<Appbar.Header",
+              "    elevated",
+              "    style={{ backgroundColor: 'transparent' }}",
+              ">",
+              "    <Appbar.BackAction",
+              "        onPress={() => {",
+              "            if (selectMode) {",
+              "                setSelectMode(false)",
+              "                setSelected(new Set())",
+              "            } else {",
+              "                router.back()",
+              "            }",
+              "        }}",
+              "    />",
+              "    <Appbar.Content",
+              "        title={",
+              "            selectMode",
+              "                ? ('已选择\u2009' + selected.size + '\u2009首')",
+              "                : collectionData.info.title",
+              "        }",
+              "        titleStyle={!selectMode ? { textAlign: 'center' } : undefined}",
+              "        onPress={handleDoubleTap}",
+              "    />",
+              "    {selectMode ? (",
+              "        <>",
+              "            <Appbar.Action",
+              "                icon='select-all'",
+              "                onPress={() => setSelected(new Set(tracks.map((t) => t.id)))}",
+              "            />",
+              "            <Appbar.Action",
+              "                icon='select-compare'",
+              "                onPress={() =>",
+              "                    setSelected(",
+              "                        new Set(",
+              "                            tracks.filter((t) => !selected.has(t.id)).map((t) => t.id),",
+              "                        ),",
+              "                    )",
+              "                }",
+              "            />",
+              "            <Appbar.Action",
+              "                icon='playlist-plus'",
+              "                onPress={() => {",
+              "                    const payloads = []",
+              "                    for (const selectedId of selected) {",
+              "                        const track = tracks.find((t) => t.id === selectedId)",
+              "                        if (track) {",
+              "                            payloads.push({",
+              "                                track: track as Track,",
+              "                                artist: track.artist!,",
+              "                            })",
+              "                        }",
+              "                    }",
+              "                    openModal('BatchAddTracksToLocalPlaylist', {",
+              "                        payloads,",
+              "                    })",
+              "                }}",
+              "            />",
+              "        </>",
+              "    ) : (",
+              "        <Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />",
+              "    )}",
+              "</Appbar.Header>"
+            ].join("\n");
+            collCode = collCode.replace(/<Appbar\.Header[\s\S]*?<\/Appbar\.Header>/, newCollHeader);
             fs.writeFileSync(collPagePath, collCode, "utf8");
             console.log("✅ 已修复 collection/[id].tsx 合集详情页返回按钮左对齐与标题居中");
           }
@@ -1082,57 +1121,57 @@ jobs:
           const favPagePath = "apps/mobile/src/app/playlist/remote/favorite/[id].tsx";
           if (fs.existsSync(favPagePath)) {
             let favCode = fs.readFileSync(favPagePath, "utf8");
-            favCode = favCode.replace(
-              /<Appbar\.Header[\s\S]*?<\/Appbar\.Header>/,
-              `<Appbar.Header
-				elevated
-				style={{ backgroundColor: 'transparent' }}
-			>
-				<Appbar.BackAction
-					onPress={() => {
-						if (selectMode) {
-							setSelectMode(false)
-							setSelected(new Set())
-						} else {
-							router.back()
-						}
-					}}
-				/>
-				<Appbar.Content
-					title={
-						selectMode
-							? \`已选择\\u2009\${selected.size}\\u2009首\`
-							: favoriteData.pages[0].info.title
-					}
-					titleStyle={!selectMode ? { textAlign: 'center' } : undefined}
-					onPress={handleDoubleTap}
-				/>
-				{selectMode ? (
-					<>
-						<Appbar.Action
-							icon='playlist-plus'
-							onPress={() => {
-								const payloads = []
-								for (const selectedId of selected) {
-									const track = tracks.find((t) => t.id === selectedId)
-									if (track) {
-										payloads.push({
-											track: track as Track,
-											artist: track.artist!,
-										})
-									}
-								}
-								openModal('BatchAddTracksToLocalPlaylist', {
-									payloads,
-								})
-							}}
-						/>
-					</>
-				) : (
-					<Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />
-				)}
-			</Appbar.Header>`
-            );
+            const newFavHeader = [
+              "<Appbar.Header",
+              "    elevated",
+              "    style={{ backgroundColor: 'transparent' }}",
+              ">",
+              "    <Appbar.BackAction",
+              "        onPress={() => {",
+              "            if (selectMode) {",
+              "                setSelectMode(false)",
+              "                setSelected(new Set())",
+              "            } else {",
+              "                router.back()",
+              "            }",
+              "        }}",
+              "    />",
+              "    <Appbar.Content",
+              "        title={",
+              "            selectMode",
+              "                ? ('已选择\u2009' + selected.size + '\u2009首')",
+              "                : favoriteData.pages[0].info.title",
+              "        }",
+              "        titleStyle={!selectMode ? { textAlign: 'center' } : undefined}",
+              "        onPress={handleDoubleTap}",
+              "    />",
+              "    {selectMode ? (",
+              "        <>",
+              "            <Appbar.Action",
+              "                icon='playlist-plus'",
+              "                onPress={() => {",
+              "                    const payloads = []",
+              "                    for (const selectedId of selected) {",
+              "                        const track = tracks.find((t) => t.id === selectedId)",
+              "                        if (track) {",
+              "                            payloads.push({",
+              "                                track: track as Track,",
+              "                                artist: track.artist!,",
+              "                            })",
+              "                        }",
+              "                    }",
+              "                    openModal('BatchAddTracksToLocalPlaylist', {",
+              "                        payloads,",
+              "                    })",
+              "                }}",
+              "            />",
+              "        </>",
+              "    ) : (",
+              "        <Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />",
+              "    )}",
+              "</Appbar.Header>"
+            ].join("\n");
+            favCode = favCode.replace(/<Appbar\.Header[\s\S]*?<\/Appbar\.Header>/, newFavHeader);
             fs.writeFileSync(favPagePath, favCode, "utf8");
             console.log("✅ 已修复 favorite/[id].tsx 收藏夹详情页返回按钮左对齐与标题居中");
           }
@@ -1155,44 +1194,44 @@ jobs:
           const updateSvcPath = "apps/mobile/src/lib/services/updateService.ts";
           if (fs.existsSync(updateSvcPath)) {
             let updateSvcCode = fs.readFileSync(updateSvcPath, "utf8");
-            updateSvcCode = updateSvcCode.replace(
-              /export async function fetchLatestRelease\(\): Promise<[\s\S]*?\n\}/,
-              `export async function fetchLatestRelease(): Promise<Result<ReleaseInfo, Error>> {
-	try {
-		const res = await Sentry.startSpan(
-			{ name: 'http:fetch:update-manifest', op: 'http' },
-			() =>
-				fetch('https://api.github.com/repos/dusttrustrs/BBPlayer-iOS-Package/releases/latest', {
-					cache: 'no-store',
-					headers: {
-						'User-Agent': 'BBPlayer-iOS',
-						'Accept': 'application/vnd.github.v3+json',
-					},
-				}),
-		)
-		if (!res.ok) {
-			return err(new Error(\`获取更新信息失败: \${res.status} \${res.statusText}\`))
-		}
-		const data = (await res.json()) as Record<string, unknown>
-		const rawTag = typeof data.tag_name === 'string' ? data.tag_name : '1.0.0'
-		const version = normalizeVersion(rawTag.replace(/^v/, '').split('-')[0])
-		const url =
-			typeof data.html_url === 'string'
-				? data.html_url
-				: 'https://github.com/dusttrustrs/BBPlayer-iOS-Package/releases/latest'
-		const notes = typeof data.body === 'string' ? data.body : ''
-		const releaseInfo: ReleaseInfo = {
-			version,
-			url,
-			notes,
-			forced: false,
-		}
-		return ok(releaseInfo)
-	} catch (e) {
-		return err(toError(e))
-	}
-}`
-            );
+            const newFetchRelease = [
+              "export async function fetchLatestRelease(): Promise<Result<ReleaseInfo, Error>> {",
+              "    try {",
+              "        const res = await Sentry.startSpan(",
+              "            { name: 'http:fetch:update-manifest', op: 'http' },",
+              "            () =>",
+              "                fetch('https://api.github.com/repos/dusttrustrs/BBPlayer-iOS-Package/releases/latest', {",
+              "                    cache: 'no-store',",
+              "                    headers: {",
+              "                        'User-Agent': 'BBPlayer-iOS',",
+              "                        'Accept': 'application/vnd.github.v3+json',",
+              "                    },",
+              "                }),",
+              "        )",
+              "        if (!res.ok) {",
+              "            return err(new Error('获取更新信息失败: ' + res.status + ' ' + res.statusText))",
+              "        }",
+              "        const data = (await res.json()) as Record<string, unknown>",
+              "        const rawTag = typeof data.tag_name === 'string' ? data.tag_name : '1.0.0'",
+              "        const version = normalizeVersion(rawTag.replace(/^v/, '').split('-')[0])",
+              "        const url =",
+              "            typeof data.html_url === 'string'",
+              "                ? data.html_url",
+              "                : 'https://github.com/dusttrustrs/BBPlayer-iOS-Package/releases/latest'",
+              "        const notes = typeof data.body === 'string' ? data.body : ''",
+              "        const releaseInfo: ReleaseInfo = {",
+              "            version,",
+              "            url,",
+              "            notes,",
+              "            forced: false,",
+              "        }",
+              "        return ok(releaseInfo)",
+              "    } catch (e) {",
+              "        return err(toError(e))",
+              "    }",
+              "}"
+            ].join("\n");
+            updateSvcCode = updateSvcCode.replace(/export async function fetchLatestRelease\(\): Promise<[\s\S]*?\n\}/, newFetchRelease);
             fs.writeFileSync(updateSvcPath, updateSvcCode, "utf8");
             console.log("✅ 已配置 updateService.ts 指向 GitHub Release API 更新源");
           }
@@ -1208,8 +1247,9 @@ jobs:
           const appConfigPath = "apps/mobile/app.config.ts";
           if (fs.existsSync(appConfigPath)) {
             let appCfgCode = fs.readFileSync(appConfigPath, "utf8");
+            const manifestRegex = new RegExp("updateManifestUrl:\\s*['\"][^'\"]+['\"]");
             appCfgCode = appCfgCode.replace(
-              /updateManifestUrl:\s*['"][^'"]+['"]/,
+              manifestRegex,
               "updateManifestUrl: 'https://api.github.com/repos/dusttrustrs/BBPlayer-iOS-Package/releases/latest'"
             );
             fs.writeFileSync(appConfigPath, appCfgCode, "utf8");
@@ -1238,181 +1278,181 @@ jobs:
               'const PRESET_DURATIONS = [15, 30, 45, 60]',
               '',
               'const SleepTimerModal = () => {',
-              '	const close = useModalStore((state) => state.close)',
-              '	const { data: sleepTimerEndAt } = useSleepTimerEndTime()',
-              '	const [remainingTime, setRemainingTime] = useState<number | null>(null)',
-              '	const [customInputVisible, setCustomInputVisible] = useState(false)',
-              '	const [customMinutes, setCustomMinutes] = useState("")',
+              '    const close = useModalStore((state) => state.close)',
+              '    const { data: sleepTimerEndAt } = useSleepTimerEndTime()',
+              '    const [remainingTime, setRemainingTime] = useState<number | null>(null)',
+              '    const [customInputVisible, setCustomInputVisible] = useState(false)',
+              '    const [customMinutes, setCustomMinutes] = useState("")',
               '',
-              '	useEffect(() => {',
-              '		if (sleepTimerEndAt) {',
-              '			const interval = setInterval(() => {',
-              '				const remaining = Math.round((sleepTimerEndAt - Date.now()) / 1000)',
-              '				if (remaining > 0) {',
-              '					setRemainingTime(remaining)',
-              '				} else {',
-              '					setRemainingTime(null)',
-              '					clearInterval(interval)',
-              '				}',
-              '			}, 1000)',
-              '			const remaining = Math.round((sleepTimerEndAt - Date.now()) / 1000)',
-              '			setRemainingTime(remaining > 0 ? remaining : null)',
-              '			return () => clearInterval(interval)',
-              '		} else {',
-              '			setRemainingTime(null)',
-              '		}',
-              '	}, [sleepTimerEndAt])',
+              '    useEffect(() => {',
+              '        if (sleepTimerEndAt) {',
+              '            const interval = setInterval(() => {',
+              '                const remaining = Math.round((sleepTimerEndAt - Date.now()) / 1000)',
+              '                if (remaining > 0) {',
+              '                    setRemainingTime(remaining)',
+              '                } else {',
+              '                    setRemainingTime(null)',
+              '                    clearInterval(interval)',
+              '                }',
+              '            }, 1000)',
+              '            const remaining = Math.round((sleepTimerEndAt - Date.now()) / 1000)',
+              '            setRemainingTime(remaining > 0 ? remaining : null)',
+              '            return () => clearInterval(interval)',
+              '        } else {',
+              '            setRemainingTime(null)',
+              '        }',
+              '    }, [sleepTimerEndAt])',
               '',
-              '	const handleSetTimer = async (minutes: number) => {',
-              '		Keyboard.dismiss()',
-              '		try {',
-              '			await Orpheus.setSleepTimer(minutes * 60 * 1000)',
-              '			toast.success("设置定时器成功")',
-              '			close("SleepTimer")',
-              '		} catch (e) {',
-              '			toastAndLogError("设置定时器失败", e, "Modal.SleepTimer")',
-              '		}',
-              '	}',
+              '    const handleSetTimer = async (minutes: number) => {',
+              '        Keyboard.dismiss()',
+              '        try {',
+              '            await Orpheus.setSleepTimer(minutes * 60 * 1000)',
+              '            toast.success("设置定时器成功")',
+              '            close("SleepTimer")',
+              '        } catch (e) {',
+              '            toastAndLogError("设置定时器失败", e, "Modal.SleepTimer")',
+              '        }',
+              '    }',
               '',
-              '	const handleCancelTimer = async () => {',
-              '		Keyboard.dismiss()',
-              '		try {',
-              '			await Orpheus.cancelSleepTimer()',
-              '			toast.success("取消定时器成功")',
-              '			close("SleepTimer")',
-              '		} catch (e) {',
-              '			toastAndLogError("取消定时器失败", e, "Modal.SleepTimer")',
-              '		}',
-              '	}',
+              '    const handleCancelTimer = async () => {',
+              '        Keyboard.dismiss()',
+              '        try {',
+              '            await Orpheus.cancelSleepTimer()',
+              '            toast.success("取消定时器成功")',
+              '            close("SleepTimer")',
+              '        } catch (e) {',
+              '            toastAndLogError("取消定时器失败", e, "Modal.SleepTimer")',
+              '        }',
+              '    }',
               '',
-              '	return (',
-              '		<TouchableWithoutFeedback onPress={Keyboard.dismiss}>',
-              '			<View>',
-              '				<Dialog.Title>定时关闭</Dialog.Title>',
-              '				<Dialog.Content>',
-              '					{remainingTime ? (',
-              '						<View style={styles.remainingTimeContainer}>',
-              '							<Text variant="headlineMedium">',
-              '								剩余 {formatDurationToHHMMSS(remainingTime)}',
-              '							</Text>',
-              '						</View>',
-              '					) : (',
-              '						<Text style={styles.promptText}>选择预设时间或自定义</Text>',
-              '					)}',
-              '					<View style={styles.presetContainer}>',
-              '						{PRESET_DURATIONS.map((minutes) => (',
-              '							<Button',
-              '								key={minutes}',
-              '								mode="contained-tonal"',
-              '								compact',
-              '								onPress={() => handleSetTimer(minutes)}',
-              '								style={styles.presetButton}',
-              '								labelStyle={styles.presetLabel}',
-              '							>',
-              '								{minutes}分',
-              '							</Button>',
-              '						))}',
-              '					</View>',
-              '					{customInputVisible ? (',
-              '						<View style={styles.customInputContainer}>',
-              '							<TextInput',
-              '								label="分钟"',
-              '								value={customMinutes}',
-              '								onChangeText={setCustomMinutes}',
-              '								keyboardType="number-pad"',
-              '								returnKeyType="done"',
-              '								onSubmitEditing={Keyboard.dismiss}',
-              '								autoFocus',
-              '								mode="outlined"',
-              '								style={styles.customInput}',
-              '							/>',
-              '							<Button',
-              '								mode="contained"',
-              '								compact',
-              '								style={styles.actionBtn}',
-              '								onPress={async () => {',
-              '									const minutes = parseInt(customMinutes, 10)',
-              '									if (!isNaN(minutes) && minutes > 0) {',
-              '										await handleSetTimer(minutes)',
-              '									}',
-              '								}}',
-              '							>',
-              '								设置',
-              '							</Button>',
-              '							<Button',
-              '								mode="text"',
-              '								compact',
-              '								onPress={() => {',
-              '									Keyboard.dismiss()',
-              '									setCustomInputVisible(false)',
-              '								}}',
-              '							>',
-              '								收起',
-              '							</Button>',
-              '						</View>',
-              '					) : (',
-              '						<Button',
-              '							mode="text"',
-              '							compact',
-              '							onPress={() => setCustomInputVisible(true)}',
-              '						>',
-              '							自定义时间',
-              '						</Button>',
-              '					)}',
-              '				</Dialog.Content>',
-              '				<Dialog.Actions>',
-              '					{sleepTimerEndAt && (',
-              '						<Button',
-              '							onPress={handleCancelTimer}',
-              '							textColor="red"',
-              '						>',
-              '							取消定时器',
-              '						</Button>',
-              '					)}',
-              '					<Button onPress={() => { Keyboard.dismiss(); close("SleepTimer"); }}>关闭</Button>',
-              '				</Dialog.Actions>',
-              '			</View>',
-              '		</TouchableWithoutFeedback>',
-              '	)',
+              '    return (',
+              '        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>',
+              '            <View>',
+              '                <Dialog.Title>定时关闭</Dialog.Title>',
+              '                <Dialog.Content>',
+              '                    {remainingTime ? (',
+              '                        <View style={styles.remainingTimeContainer}>',
+              '                            <Text variant="headlineMedium">',
+              '                                剩余 {formatDurationToHHMMSS(remainingTime)}',
+              '                            </Text>',
+              '                        </View>',
+              '                    ) : (',
+              '                        <Text style={styles.promptText}>选择预设时间或自定义</Text>',
+              '                    )}',
+              '                    <View style={styles.presetContainer}>',
+              '                        {PRESET_DURATIONS.map((minutes) => (',
+              '                            <Button',
+              '                                key={minutes}',
+              '                                mode="contained-tonal"',
+              '                                compact',
+              '                                onPress={() => handleSetTimer(minutes)}',
+              '                                style={styles.presetButton}',
+              '                                labelStyle={styles.presetLabel}',
+              '                            >',
+              '                                {minutes}分',
+              '                            </Button>',
+              '                        ))}',
+              '                    </View>',
+              '                    {customInputVisible ? (',
+              '                        <View style={styles.customInputContainer}>',
+              '                            <TextInput',
+              '                                label="分钟"',
+              '                                value={customMinutes}',
+              '                                onChangeText={setCustomMinutes}',
+              '                                keyboardType="number-pad"',
+              '                                returnKeyType="done"',
+              '                                onSubmitEditing={Keyboard.dismiss}',
+              '                                autoFocus',
+              '                                mode="outlined"',
+              '                                style={styles.customInput}',
+              '                            />',
+              '                            <Button',
+              '                                mode="contained"',
+              '                                compact',
+              '                                style={styles.actionBtn}',
+              '                                onPress={async () => {',
+              '                                    const minutes = parseInt(customMinutes, 10)',
+              '                                    if (!isNaN(minutes) && minutes > 0) {',
+              '                                        await handleSetTimer(minutes)',
+              '                                    }',
+              '                                }}',
+              '                            >',
+              '                                设置',
+              '                            </Button>',
+              '                            <Button',
+              '                                mode="text"',
+              '                                compact',
+              '                                onPress={() => {',
+              '                                    Keyboard.dismiss()',
+              '                                    setCustomInputVisible(false)',
+              '                                }}',
+              '                            >',
+              '                                收起',
+              '                            </Button>',
+              '                        </View>',
+              '                    ) : (',
+              '                        <Button',
+              '                            mode="text"',
+              '                            compact',
+              '                            onPress={() => setCustomInputVisible(true)}',
+              '                        >',
+              '                            自定义时间',
+              '                        </Button>',
+              '                    )}',
+              '                </Dialog.Content>',
+              '                <Dialog.Actions>',
+              '                    {sleepTimerEndAt && (',
+              '                        <Button',
+              '                            onPress={handleCancelTimer}',
+              '                            textColor="red"',
+              '                        >',
+              '                            取消定时器',
+              '                        </Button>',
+              '                    )}',
+              '                    <Button onPress={() => { Keyboard.dismiss(); close("SleepTimer"); }}>关闭</Button>',
+              '                </Dialog.Actions>',
+              '            </View>',
+              '        </TouchableWithoutFeedback>',
+              '    )',
               '}',
               '',
               'const styles = StyleSheet.create({',
-              '	remainingTimeContainer: {',
-              '		alignItems: "center",',
-              '		marginBottom: 12,',
-              '	},',
-              '	promptText: {',
-              '		textAlign: "center",',
-              '		marginBottom: 12,',
-              '	},',
-              '	presetContainer: {',
-              '		flexDirection: "row",',
-              '		justifyContent: "space-between",',
-              '		gap: 6,',
-              '		marginBottom: 12,',
-              '	},',
-              '	presetButton: {',
-              '		flex: 1,',
-              '		minWidth: 0,',
-              '	},',
-              '	presetLabel: {',
-              '		marginHorizontal: 4,',
-              '		marginVertical: 6,',
-              '		fontSize: 13,',
-              '	},',
-              '	customInputContainer: {',
-              '		flexDirection: "row",',
-              '		alignItems: "center",',
-              '		gap: 6,',
-              '		marginTop: 4,',
-              '	},',
-              '	customInput: {',
-              '		flex: 1,',
-              '		height: 40,',
-              '	},',
-              '	actionBtn: {',
-              '		marginLeft: 4,',
-              '	},',
+              '    remainingTimeContainer: {',
+              '        alignItems: "center",',
+              '        marginBottom: 12,',
+              '    },',
+              '    promptText: {',
+              '        textAlign: "center",',
+              '        marginBottom: 12,',
+              '    },',
+              '    presetContainer: {',
+              '        flexDirection: "row",',
+              '        justifyContent: "space-between",',
+              '        gap: 6,',
+              '        marginBottom: 12,',
+              '    },',
+              '    presetButton: {',
+              '        flex: 1,',
+              '        minWidth: 0,',
+              '    },',
+              '    presetLabel: {',
+              '        marginHorizontal: 4,',
+              '        marginVertical: 6,',
+              '        fontSize: 13,',
+              '    },',
+              '    customInputContainer: {',
+              '        flexDirection: "row",',
+              '        alignItems: "center",',
+              '        gap: 6,',
+              '        marginTop: 4,',
+              '    },',
+              '    customInput: {',
+              '        flex: 1,',
+              '        height: 40,',
+              '    },',
+              '    actionBtn: {',
+              '        marginLeft: 4,',
+              '    },',
               '})',
               '',
               'export default SleepTimerModal'
