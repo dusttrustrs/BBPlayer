@@ -453,8 +453,9 @@ jobs:
                 "        onMoveShouldSetPanResponder: (_, gestureState) => {",
                 "          return enabled && (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) < 15)",
                 "        },",
+                "        onPanResponderTerminationRequest: () => false,",
                 "        onPanResponderGrant: (evt) => {",
-                "          isDraggingShared.value = true",
+                "          isDraggingShared.value = true,",
                 "          thumbScale.value = withTiming(1.25, { duration: 150 })",
                 "          onDragStateChange?.(true)",
                 "          const width = sliderWidthRef.current || 1",
@@ -479,14 +480,15 @@ jobs:
                 "          onValueChangeFinished?.(localProgress.value)",
                 "          setTimeout(() => {",
                 "            isDraggingShared.value = false",
-                "          }, 300)",
+                "          }, 500)",
                 "        },",
                 "        onPanResponderTerminate: () => {",
                 "          thumbScale.value = withTiming(1, { duration: 150 })",
                 "          onDragStateChange?.(false)",
+                "          onValueChangeFinished?.(localProgress.value)",
                 "          setTimeout(() => {",
                 "            isDraggingShared.value = false",
-                "          }, 300)",
+                "          }, 500)",
                 "        },",
                 "      }),",
                 "    [enabled, min, max, onValueChange, onValueChangeFinished, onDragStateChange]",
@@ -1007,7 +1009,7 @@ jobs:
                   '            if isSimultaneousPlaybackAllowed {',
                   '                try session.setCategory(.playback, mode: .default, options: options)',
                   '            } else {',
-                  '                try session.setCategory(.playback, mode: .default, policy: .longFormAudio)',
+                  '                try session.setCategory(.playback, mode: .default, options: options)',
                   '            }',
                   '            try session.setActive(true)',
                   '            NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: session)',
@@ -2172,6 +2174,279 @@ jobs:
             }
           }
 
+          // 20. 修复播放队列 (PlayerQueueModal.tsx) 删除按钮无法点击，并支持 iOS 原生左滑删除曲目效果：
+          const queueModalPath = "apps/mobile/src/components/modals/PlayerQueueModal.tsx";
+          if (fs.existsSync(queueModalPath)) {
+            let queueModal = fs.readFileSync(queueModalPath, "utf8");
+            if (!queueModal.includes("ReanimatedSwipeable")) {
+              queueModal = "import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable'\nimport { Pressable } from 'react-native'\n" + queueModal;
+              const oldTrackItemRegex = /const TrackItem = memo\([\s\S]*?TrackItem\.displayName = 'TrackItem'/;
+              const newTrackItem = [
+                "const TrackItem = memo(",
+                "  ({",
+                "    track,",
+                "    onSwitchTrack,",
+                "    onRemoveTrack,",
+                "    onDragStart,",
+                "    onDragUpdate,",
+                "    onDragEnd,",
+                "    isDragging,",
+                "    index,",
+                "  }: {",
+                "    track: OrpheusTrack",
+                "    onSwitchTrack: (index: number) => void",
+                "    onRemoveTrack: (index: number) => void",
+                "    onDragStart: (index: number, translationY: number, touchY: number) => void",
+                "    onDragUpdate: (translationY: number) => void",
+                "    onDragEnd: () => void",
+                "    isDragging: boolean",
+                "    index: number",
+                "  }) => {",
+                "    const colors = useTheme().colors",
+                "    const isCurrentTrack = useIsCurrentTrack(track.id)",
+                "    const dragPan = usePanGesture({",
+                "      activateAfterLongPress: 300,",
+                "      runOnJS: true,",
+                "      onActivate: (event) => onDragStart(index, event.translationY, event.y),",
+                "      onUpdate: (event) => onDragUpdate(event.translationY),",
+                "      onFinalize: onDragEnd,",
+                "    })",
+                "",
+                "    const renderRightActions = (",
+                "      _progress: any,",
+                "      _translation: any,",
+                "      swipeableMethods: SwipeableMethods,",
+                "    ) => (",
+                "      <View",
+                "        style={{",
+                "          width: 80,",
+                "          height: ROW_HEIGHT,",
+                "          justifyContent: 'center',",
+                "          alignItems: 'center',",
+                "        }}",
+                "      >",
+                "        <Pressable",
+                "          style={{",
+                "            backgroundColor: '#ff3b30',",
+                "            width: '100%',",
+                "            height: '100%',",
+                "            justifyContent: 'center',",
+                "            alignItems: 'center',",
+                "          }}",
+                "          onPress={() => {",
+                "            swipeableMethods.close()",
+                "            onRemoveTrack(index)",
+                "          }}",
+                "        >",
+                "          <Text style={{ color: '#ffffff', fontWeight: 'bold' }}>删除</Text>",
+                "        </Pressable>",
+                "      </View>",
+                "    )",
+                "",
+                "    return (",
+                "      <ReanimatedSwipeable",
+                "        friction={2}",
+                "        overshootRight={false}",
+                "        rightThreshold={40}",
+                "        renderRightActions={renderRightActions}",
+                "      >",
+                "        <GestureDetector gesture={dragPan}>",
+                "          <View",
+                "            collapsable={false}",
+                "            style={{",
+                "              backgroundColor: isCurrentTrack",
+                "                ? colors.elevation.level5",
+                "                : undefined,",
+                "              overflow: 'hidden',",
+                "              height: ROW_HEIGHT,",
+                "              opacity: isDragging ? 0.35 : 1,",
+                "              flexDirection: 'row',",
+                "              alignItems: 'center',",
+                "            }}",
+                "          >",
+                "            <Touchable",
+                "              style={{ flex: 1, height: ROW_HEIGHT }}",
+                "              androidRipple={{}}",
+                "              onPress={() => onSwitchTrack(index)}",
+                "            >",
+                "              <View",
+                "                style={{",
+                "                  flexDirection: 'row',",
+                "                  alignItems: 'center',",
+                "                  padding: 8,",
+                "                  flex: 1,",
+                "                }}",
+                "              >",
+                "                <View",
+                "                  style={{",
+                "                    paddingRight: 0,",
+                "                    flex: 1,",
+                "                    marginLeft: 12,",
+                "                    flexDirection: 'column',",
+                "                  }}",
+                "                >",
+                "                  <Text",
+                "                    variant='bodyMedium'",
+                "                    numberOfLines={1}",
+                "                    style={{ fontWeight: 'bold' }}",
+                "                  >",
+                "                    {track.title}",
+                "                  </Text>",
+                "                  <Text",
+                "                    variant='bodySmall'",
+                "                    style={{ fontWeight: 'thin' }}",
+                "                    numberOfLines={1}",
+                "                  >",
+                "                    {track.artist ?? '未知作者'}",
+                "                  </Text>",
+                "                </View>",
+                "              </View>",
+                "            </Touchable>",
+                "            <IconButton",
+                "              icon='close-circle-outline'",
+                "              size={24}",
+                "              onPress={() => {",
+                "                onRemoveTrack(index)",
+                "              }}",
+                "            />",
+                "          </View>",
+                "        </GestureDetector>",
+                "      </ReanimatedSwipeable>",
+                "    )",
+                "  },",
+                ")",
+                "",
+                "TrackItem.displayName = 'TrackItem'"
+              ].join("\n");
+              queueModal = queueModal.replace(oldTrackItemRegex, newTrackItem);
+              fs.writeFileSync(queueModalPath, queueModal, "utf8");
+              console.log("✅ 已在 PlayerQueueModal.tsx 中修复删除按钮并实现 iOS 原生左滑删除曲目");
+            }
+          }
+
+          // 21. 修复侧滑返回上一级界面时最左侧出现白边问题：
+          const rootLayoutPath = "apps/mobile/src/app/_layout.tsx";
+          if (fs.existsSync(rootLayoutPath)) {
+            let layoutCode = fs.readFileSync(rootLayoutPath, "utf8");
+            if (!layoutCode.includes("contentStyle: { backgroundColor: appBg }")) {
+              layoutCode = layoutCode.replace(
+                "function RootLayout() {",
+                "function RootLayout() {\n\tconst colorScheme = useColorScheme()\n\tconst isDark = colorScheme === 'dark'\n\tconst appBg = isDark ? '#141218' : '#FEF7FF'"
+              );
+              layoutCode = layoutCode.replace(
+                "<View style={styles.appContainer}>",
+                "<View style={[styles.appContainer, { backgroundColor: appBg }]}>"
+              );
+              layoutCode = layoutCode.replace(
+                "screenOptions={{ headerShown: false }}",
+                "screenOptions={{\n\t\t\t\t\t\theaderShown: false,\n\t\t\t\t\t\tcontentStyle: { backgroundColor: appBg },\n\t\t\t\t\t}}"
+              );
+              fs.writeFileSync(rootLayoutPath, layoutCode, "utf8");
+              console.log("✅ 已在 _layout.tsx 中为 Stack 设置 contentStyle 背景色");
+            }
+          }
+          const providersPath = "apps/mobile/src/components/providers.tsx";
+          if (fs.existsSync(providersPath)) {
+            let providersCode = fs.readFileSync(providersPath, "utf8");
+            if (!providersCode.includes("backgroundColor: paperTheme.colors.background")) {
+              providersCode = providersCode.replace(
+                "<View style={styles.container}>",
+                "<View style={[styles.container, { backgroundColor: paperTheme.colors.background }]}>"
+              );
+              providersCode = providersCode.replace(
+                "<GestureHandlerRootView style={styles.container}>",
+                "<GestureHandlerRootView style={[styles.container, { backgroundColor: paperTheme.colors.background }]}>"
+              );
+              fs.writeFileSync(providersPath, providersCode, "utf8");
+              console.log("✅ 已在 providers.tsx 中为根容器补齐主题背景色");
+            }
+          }
+
+          // 22. 修复评论区图片显示一片空白问题：
+          const imgUrlPath = "apps/mobile/src/utils/imageUrl.ts";
+          if (fs.existsSync(imgUrlPath)) {
+            let imgUrlCode = fs.readFileSync(imgUrlPath, "utf8");
+            imgUrlCode = imgUrlCode.replace(
+              /const BILIBILI_IMAGE_CDN = .*/,
+              "const BILIBILI_IMAGE_CDN = /^https?:\\/\\/(?:i[0-9]\\.hdslb\\.com|article\\.biliimg\\.com|archive\\.biliimg\\.com)\\/bfs\\//" 
+            );
+            imgUrlCode = imgUrlCode.replace(
+              /export function resolveBilibiliImageUrl[\s\S]*?return `\$\{secureUrl\}@\$\{maxSize\}w_\$\{maxSize\}h`\s*\}/,
+              [
+                "export function resolveBilibiliImageUrl(",
+                "  url: string | null | undefined,",
+                "  maxSize = 800,",
+                "): string | null | undefined {",
+                "  if (!url) return url",
+                "  let secureUrl = url.trim()",
+                "  if (secureUrl.startsWith('//')) {",
+                "    secureUrl = 'https:' + secureUrl",
+                "  } else if (secureUrl.startsWith('http:')) {",
+                "    secureUrl = secureUrl.replace('http:', 'https:')",
+                "  }",
+                "  if (!BILIBILI_IMAGE_CDN.test(secureUrl)) return secureUrl",
+                "  if (secureUrl.includes('@')) return secureUrl",
+                "  return `${secureUrl}@${maxSize}w_${maxSize}h`",
+                "}"
+              ].join("\n")
+            );
+            fs.writeFileSync(imgUrlPath, imgUrlCode, "utf8");
+            console.log("✅ 已在 imageUrl.ts 中拓展 B 站图片 CDN 正则与协议安全转换");
+          }
+          const commentItemPath = "apps/mobile/src/features/comments/components/CommentItem.tsx";
+          if (fs.existsSync(commentItemPath)) {
+            let commentCode = fs.readFileSync(commentItemPath, "utf8");
+            if (!commentCode.includes("resolveBilibiliImageUrl")) {
+              commentCode = commentCode.replace(
+                "import { formatRelativeTime } from '@/utils/time'",
+                "import { formatRelativeTime } from '@/utils/time'\nimport { resolveBilibiliImageUrl } from '@/utils/imageUrl'"
+              );
+            }
+            const oldPicturesBlock = /\{item\.content\.pictures && item\.content\.pictures\.length > 0 && \([\s\S]*?<\/View>\s*\)\}/;
+            const newPicturesBlock = [
+              "{item.content.pictures && item.content.pictures.length > 0 && (",
+              "            <View style={styles.imagesContainer}>",
+              "              <Galeria",
+              "                urls={item.content.pictures.map((pic) => resolveBilibiliImageUrl(pic.img_src, 1200) ?? (pic.img_src?.startsWith('//') ? `https:${pic.img_src}` : pic.img_src?.replace(/^http:/, 'https:')) ?? '')}",
+              "                theme={darkMode ? 'dark' : 'light'}",
+              "              >",
+              "                {item.content.pictures.map((pic, index) => {",
+              "                  const formattedUrl = resolveBilibiliImageUrl(pic.img_src, 600) ?? (pic.img_src?.startsWith('//') ? `https:${pic.img_src}` : pic.img_src?.replace(/^http:/, 'https:')) ?? ''",
+              "                  return (",
+              "                    /* oxlint-disable-next-line @typescript-eslint/unbound-method */",
+              "                    <Galeria.Image",
+              "                      index={index}",
+              "                      // oxlint-disable-next-line react/no-array-index-key",
+              "                      key={index}",
+              "                      style={styles.commentImage}",
+              "                    >",
+              "                      <View",
+              "                        style={[styles.commentImage, { backgroundColor: darkMode ? '#262626' : '#f0f0f0' }]}",
+              "                        testID='comment-image'",
+              "                      >",
+              "                        <Image",
+              "                          source={{",
+              "                            uri: formattedUrl,",
+              "                            headers: { Referer: 'https://www.bilibili.com' },",
+              "                          }}",
+              "                          style={styles.commentImageInner}",
+              "                          contentFit='cover'",
+              "                          cachePolicy='disk'",
+              "                        />",
+              "                      </View>",
+              "                      {/* oxlint-disable-next-line @typescript-eslint/unbound-method */}",
+              "                    </Galeria.Image>",
+              "                  )",
+              "                })}",
+              "              </Galeria>",
+              "            </View>",
+              "          )}"
+            ].join("\n");
+            commentCode = commentCode.replace(oldPicturesBlock, newPicturesBlock);
+            fs.writeFileSync(commentItemPath, commentCode, "utf8");
+            console.log("✅ 已在 CommentItem.tsx 中修复评论区图片空白问题");
+          }
+
           EOF
 
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
@@ -2240,6 +2515,33 @@ jobs:
               execSync(`/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "${plistPath}" 2>/dev/null || true`);
               execSync(`/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "${plistPath}" 2>/dev/null || true`);
               console.log("✅ PlistBuddy: 已追加 UIBackgroundModes (audio 后台播放)");
+            }
+          }
+
+          function findAppDelegate(dir) {
+            if (!fs.existsSync(dir)) return null;
+            for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, f.name);
+              if (f.name === "Pods" || f.name === "build") continue;
+              if (f.isDirectory()) {
+                const found = findAppDelegate(full);
+                if (found) return found;
+              } else if (f.name === "AppDelegate.mm" || f.name === "AppDelegate.m") {
+                return full;
+              }
+            }
+            return null;
+          }
+          const appDelegatePath = findAppDelegate("ios") || findAppDelegate("apps/mobile/ios");
+          if (appDelegatePath) {
+            let appDelegate = fs.readFileSync(appDelegatePath, "utf8");
+            if (appDelegate.includes("self.window.backgroundColor = [UIColor whiteColor];")) {
+              appDelegate = appDelegate.replace(
+                "self.window.backgroundColor = [UIColor whiteColor];",
+                "self.window.backgroundColor = [UIColor systemBackgroundColor];"
+              );
+              fs.writeFileSync(appDelegatePath, appDelegate, "utf8");
+              console.log("✅ AppDelegate: 已将 window.backgroundColor 调整为 systemBackgroundColor");
             }
           }
           EOF
