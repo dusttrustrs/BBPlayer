@@ -18,12 +18,8 @@ env:
 jobs:
   build-ios:
     name: Build Unsigned IPA
-    # 关键修复 1：必须使用 macos-26 (Apple Silicon arm64，默认预装 Xcode 26.6 / Build 17F113 / Swift 6.3.3 / iOS 26.5 Runtime)
-    # 原因：
-    # 1) 项目启用的 @rnrepo/expo-config-plugin 预编译 xcframework 产物均由 Xcode 26.6 (17F113, Swift 6.3.3, iphoneos26.5) 编译，
-    #    在 macos-15 (Xcode 16.4 / Swift 6.1 或最高 Xcode 26.3 / Swift 6.2) 上会因编译器与 SDK 版本过旧导致编译失败 (exit code 65)。
-    # 2) macos-26 默认自带与 Xcode 26.6 完全匹配的 iOS 26.5 Simulator Runtime，actool 编译 Assets.xcassets 不会再报版本不匹配。
-    runs-on: macos-26
+    # 推荐使用 macos-latest (Apple Silicon arm64，优先匹配 GitHub Actions 现货可用 Runner 避免排队等待)
+    runs-on: macos-latest
     timeout-minutes: 60
     env:
       APP_VARIANT: production
