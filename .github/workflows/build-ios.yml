@@ -333,7 +333,7 @@ jobs:
               const safeIconBlock = [
                 "const getSafeIcon = (glyph: string, size = 24): nonNullableIcon => {",
                 "  try {",
-                "    const icon = Icon.getImageSourceSync(glyph, size) as nonNullableIcon",
+                "    const icon = Icon.getImageSourceSync(glyph as any, size) as nonNullableIcon",
                 "    if (icon && icon.uri) return icon",
                 "  } catch (e) {",
                 "    console.warn('[TabLayout] getImageSourceSync failed for ' + glyph, e)",
@@ -498,7 +498,7 @@ jobs:
                 "    'worklet'",
                 "    const fraction = (localProgress.value - min) / (max - min || 1)",
                 "    const clamped = Math.max(0, Math.min(1, fraction))",
-                "    return { width: clamped * 100 + '%' }",
+                "    return { width: (`${clamped * 100}%` as any) }",
                 "  })",
 
                 "  const thumbStyle = useAnimatedStyle(() => {",
@@ -644,7 +644,7 @@ jobs:
             if (fs.existsSync(btnRelative)) {
               let btnCode = fs.readFileSync(btnRelative, "utf8");
               if (btnCode.includes("import { Touchable } from 'react-native-gesture-handler'")) {
-                btnCode = btnCode.replace("import { Touchable } from 'react-native-gesture-handler'", "import { Pressable as Touchable } from 'react-native'");
+                btnCode = btnCode.replace("import { Touchable } from 'react-native-gesture-handler'", "import { Pressable } from 'react-native'\nconst Touchable = forwardRef<any, any>(({ androidRipple, ...p }: any, r: any) => <Pressable ref={r} android_ripple={androidRipple} {...p} />)");
                 fs.writeFileSync(btnRelative, btnCode, "utf8");
                 console.log(`✅ 已为 ${path.basename(btnRelative)} 接入全平台兼容的 Pressable`);
               }
@@ -1243,6 +1243,10 @@ jobs:
           const collPagePath = "apps/mobile/src/app/playlist/remote/collection/[id].tsx";
           if (fs.existsSync(collPagePath)) {
             let collCode = fs.readFileSync(collPagePath, "utf8");
+            collCode = collCode.replace(
+              "const { selected, selectMode, toggle, enterSelectMode, setSelected } =",
+              "const { selected, selectMode, toggle, enterSelectMode, exitSelectMode, setSelected } ="
+            );
             const newCollHeader = [
               "<Appbar.Header",
               "    elevated",
@@ -1251,8 +1255,7 @@ jobs:
               "    <Appbar.BackAction",
               "        onPress={() => {",
               "            if (selectMode) {",
-              "                setSelectMode(false)",
-              "                setSelected(new Set())",
+              "                exitSelectMode()",
               "            } else {",
               "                router.back()",
               "            }",
@@ -1315,6 +1318,10 @@ jobs:
           const favPagePath = "apps/mobile/src/app/playlist/remote/favorite/[id].tsx";
           if (fs.existsSync(favPagePath)) {
             let favCode = fs.readFileSync(favPagePath, "utf8");
+            favCode = favCode.replace(
+              "const { selected, selectMode, toggle, enterSelectMode } = useTrackSelection()",
+              "const { selected, selectMode, toggle, enterSelectMode, exitSelectMode } = useTrackSelection()"
+            );
             const newFavHeader = [
               "<Appbar.Header",
               "    elevated",
@@ -1323,8 +1330,7 @@ jobs:
               "    <Appbar.BackAction",
               "        onPress={() => {",
               "            if (selectMode) {",
-              "                setSelectMode(false)",
-              "                setSelected(new Set())",
+              "                exitSelectMode()",
               "            } else {",
               "                router.back()",
               "            }",
@@ -1730,7 +1736,7 @@ jobs:
                   "<Animated.View",
                   "          pointerEvents='none'",
                   "          style={[",
-                  "            StyleSheet.absoluteFillObject,",
+                  "            StyleSheet.absoluteFill,",
                   "            {",
                   "              backgroundColor: theme.colors.primary,",
                   "              borderRadius: LIST_ITEM_BORDER_RADIUS,",
@@ -1788,7 +1794,7 @@ jobs:
                   "<Animated.View",
                   "          pointerEvents='none'",
                   "          style={[",
-                  "            StyleSheet.absoluteFillObject,",
+                  "            StyleSheet.absoluteFill,",
                   "            {",
                   "              backgroundColor: colors.primary,",
                   "              borderRadius: LIST_ITEM_BORDER_RADIUS,",
@@ -1814,7 +1820,7 @@ jobs:
               );
               btnCode = btnCode.replace(
                 "onPress={onPress}",
-                "onPress={(e) => {\n\t\t\t\t\ttriggerHalo()\n\t\t\t\t\tonPress?.(e)\n\t\t\t\t}}"
+                "onPress={() => {\n          triggerHalo()\n          onPress?.()\n        }}"
               );
               btnCode = btnCode.replace(
                 "const borderRadius = theme.roundness * 5",
@@ -1845,7 +1851,7 @@ jobs:
                   "<Animated.View",
                   "            pointerEvents='none'",
                   "            style={[",
-                  "              StyleSheet.absoluteFillObject,",
+                  "              StyleSheet.absoluteFill,",
                   "              {",
                   "                backgroundColor: textColor,",
                   "                borderRadius,",
@@ -1921,7 +1927,7 @@ jobs:
                 "const enableSystemMediaControl = useAppStore((state) => state.settings.enableSystemMediaControl ?? (!state.settings.allowSimultaneousPlayback))\n\tconst allowSimultaneousPlayback = useAppStore("
               );
             }
-            if (!playbackCode.includes("openPlayerOnTrackPress")) {
+            if (!playbackCode.includes("const openPlayerOnTrackPress =")) {
               playbackCode = playbackCode.replace(
                 "const setSettings = useAppStore((state) => state.setSettings)",
                 "const setSettings = useAppStore((state) => state.setSettings)\n\tconst openPlayerOnTrackPress = useAppStore((state) => state.settings.openPlayerOnTrackPress ?? true)"
@@ -2050,15 +2056,15 @@ jobs:
                 "import {\n\tDivider,\n\tIcon,"
               );
               trackListCode = trackListCode.replace(
-                "/** 多选状态管理 */\n\tselection: SelectionState",
+                /\/\*\* 多选状态管理 \*\/\s*selection: SelectionState/,
                 "/** 删除曲目时的处理函数（向左滑动从列表中移除） */\n\tonDeleteTrack?: (trackId: number) => void\n\t/** 多选状态管理 */\n\tselection: SelectionState"
               );
               trackListCode = trackListCode.replace(
-                "handleMenuPress: (track: Track, downloadState?: DownloadState) => void\n\t\tselection: SelectionState",
+                /handleMenuPress: \(track: Track, downloadState\?: DownloadState\) => void\s*selection: SelectionState/,
                 "handleMenuPress: (track: Track, downloadState?: DownloadState) => void\n\t\tonDeleteTrack?: (trackId: number) => void\n\t\tselection: SelectionState"
               );
               trackListCode = trackListCode.replace(
-                "const {\n\t\thandleTrackPress,\n\t\thandleMenuPress,\n\t\tselection,",
+                /const \{\s*handleTrackPress,\s*handleMenuPress,\s*selection,/,
                 "const {\n\t\thandleTrackPress,\n\t\thandleMenuPress,\n\t\tonDeleteTrack,\n\t\tselection,"
               );
               const renderItemReturnRegex = /return \([\s\S]*?<View style=\{\{ opacity: isStale \|\| isUnplayableOffline \? 0\.4 : 1 \}\}>[\s\S]*?<\/TrackListItem>[\s\S]*?<\/View>[\s\S]*?\)/;
@@ -2324,14 +2330,20 @@ jobs:
             }
           }
 
-          // 21. 修复侧滑返回上一级界面时最左侧出现白边问题：
+          // 21. 修复侧滑返回上一级界面时最左侧出现白边问题与开屏闪退：
           const rootLayoutPath = "apps/mobile/src/app/_layout.tsx";
           if (fs.existsSync(rootLayoutPath)) {
             let layoutCode = fs.readFileSync(rootLayoutPath, "utf8");
+            if (!layoutCode.includes("useColorScheme,")) {
+              layoutCode = layoutCode.replace(
+                "import { AppState, Platform, StyleSheet, View } from 'react-native'",
+                "import { AppState, Platform, StyleSheet, useColorScheme, View } from 'react-native'"
+              );
+            }
             if (!layoutCode.includes("contentStyle: { backgroundColor: appBg }")) {
               layoutCode = layoutCode.replace(
                 "function RootLayout() {",
-                "function RootLayout() {\n\tconst colorScheme = useColorScheme()\n\tconst isDark = colorScheme === 'dark'\n\tconst appBg = isDark ? '#141218' : '#FEF7FF'"
+                "function RootLayout() {\n  const colorScheme = useColorScheme()\n  const isDark = colorScheme === 'dark'\n  const appBg = isDark ? '#141218' : '#FEF7FF'"
               );
               layoutCode = layoutCode.replace(
                 "<View style={styles.appContainer}>",
