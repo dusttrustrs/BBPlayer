@@ -973,7 +973,7 @@ jobs:
           // 11. 开启 iOS 灵动岛系统动画、后台控制与音频中断互斥联动：
           // (a) 在主线程调用 UIApplication.shared.beginReceivingRemoteControlEvents() 注册系统控制权；
           // (b) 每次播放状态变化时，显式同步 MPNowPlayingInfoCenter.default().playbackState (.playing / .paused)，
-          //     使 SpringBoard 识别前台 App 为活跃音频源，在向上滑动返回桌面时触发“飞入灵动岛”系统级流体动画；
+          //     配置 longFormAudio 与 setIsNowPlayingCandidate(true)，使 SpringBoard 识别前台 App 为活跃音频源，在向上滑动返回桌面时触发“飞入灵动岛”系统级流体动画；
           // (c) 在 play()、pause() 和 loadAvPlayerItem 中保持音频会话激活与实时更新状态；
           // (d) 在其他应用播放音频时互斥暂停，关闭联动时保留混音后台播放。
           const playerMgrPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
@@ -1004,7 +1004,14 @@ jobs:
                   '        do {',
                   '            let session = AVAudioSession.sharedInstance()',
                   '            let options: AVAudioSession.CategoryOptions = isSimultaneousPlaybackAllowed ? [.mixWithOthers] : []',
-                  '            try session.setCategory(.playback, mode: .default, options: options)',
+                  '            if isSimultaneousPlaybackAllowed {',
+                  '                try session.setCategory(.playback, mode: .default, options: options)',
+                  '            } else {',
+                  '                try session.setCategory(.playback, mode: .default, policy: .longFormAudio)',
+                  '            }',
+                  '            if #available(iOS 17.0, *) {',
+                  '                try? session.setIsNowPlayingCandidate(!isSimultaneousPlaybackAllowed)',
+                  '            }',
                   '            try session.setActive(true)',
                   '            NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: session)',
                   '            NotificationCenter.default.addObserver(self, selector: #selector(handleInterruption), name: AVAudioSession.interruptionNotification, object: session)',
@@ -1106,40 +1113,52 @@ jobs:
                   '            return',
                   '        }',
                   '        ',
+                  '        let isPlayingState = (self.player.timeControlStatus == .playing || self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate || self.player.rate > 0 || self.isPlaying())',
+                  '        let playbackRate: Double = isPlayingState ? (self.player.rate > 0 ? Double(self.player.rate) : 1.0) : 0.0',
+                  '        ',
                   '        var info: [String: Any] = [',
                   '            MPMediaItemPropertyTitle: track.title ?? "Unknown Title",',
                   '            MPMediaItemPropertyArtist: track.artist ?? "Unknown Artist",',
                   '            MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime().seconds,',
-                  '            MPNowPlayingInfoPropertyPlaybackRate: player.rate,',
+                  '            MPNowPlayingInfoPropertyPlaybackRate: playbackRate,',
+                  '            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,',
                   '            MPNowPlayingInfoPropertyPlaybackQueueIndex: queueManager.getCurrentIndex(),',
                   '            MPNowPlayingInfoPropertyPlaybackQueueCount: queueManager.getQueueCount()',
                   '        ]',
                   '        ',
-                  '        if let duration = track.duration {',
+                  '        if let duration = track.duration, duration > 0 {',
                   '             info[MPMediaItemPropertyPlaybackDuration] = duration',
-                  '        } else if let playerDuration = player.currentItem?.duration.seconds, !playerDuration.isNaN {',
+                  '        } else if let playerDuration = player.currentItem?.duration.seconds, !playerDuration.isNaN, playerDuration > 0 {',
                   '             info[MPMediaItemPropertyPlaybackDuration] = playerDuration',
                   '        }',
                   '        ',
-                  '        if let artworkUrlStr = track.artwork, let artworkUrl = URL(string: artworkUrlStr) {',
-                  '            downloadImage(url: artworkUrl) { [weak self] image in',
-                  '                guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return }',
-                  '                guard let image = image else { return }',
-                  '                if var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo {',
-                  '                    if currentInfo[MPMediaItemPropertyTitle] as? String == track.title {',
-                  '                         let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }',
-                  '                         currentInfo[MPMediaItemPropertyArtwork] = artwork',
-                  '                         MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo',
+                  '        if let artworkUrlStr = track.artwork {',
+                  '            if let cached = imageCache.object(forKey: artworkUrlStr as NSString) {',
+                  '                let artwork = MPMediaItemArtwork(boundsSize: cached.size) { _ in cached }',
+                  '                info[MPMediaItemPropertyArtwork] = artwork',
+                  '            } else if let artworkUrl = URL(string: artworkUrlStr) {',
+                  '                downloadImage(url: artworkUrl) { [weak self] image in',
+                  '                    guard let self = self, self.enableSystemMediaControl && !self.isSimultaneousPlaybackAllowed else { return }',
+                  '                    guard let image = image else { return }',
+                  '                    self.imageCache.setObject(image, forKey: artworkUrlStr as NSString)',
+                  '                    DispatchQueue.main.async {',
+                  '                        if var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo {',
+                  '                            if currentInfo[MPMediaItemPropertyTitle] as? String == track.title {',
+                  '                                 let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }',
+                  '                                 currentInfo[MPMediaItemPropertyArtwork] = artwork',
+                  '                                 MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo',
+                  '                            }',
+                  '                        } else {',
+                  '                            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }',
+                  '                            MPNowPlayingInfoCenter.default().nowPlayingInfo = info',
+                  '                        }',
                   '                    }',
-                  '                } else {',
-                  '                    info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }',
-                  '                    MPNowPlayingInfoCenter.default().nowPlayingInfo = info',
                   '                }',
                   '            }',
                   '        }',
                   '        ',
                   '        MPNowPlayingInfoCenter.default().nowPlayingInfo = info',
-                  '        MPNowPlayingInfoCenter.default().playbackState = (self.isPlaying() ? .playing : .paused)',
+                  '        MPNowPlayingInfoCenter.default().playbackState = isPlayingState ? .playing : .paused',
                   '    }',
                   '    \n    '
                 ].join("\n");
@@ -1149,6 +1168,9 @@ jobs:
               if (playPausePattern.test(playerMgr)) {
                 playerMgr = playerMgr.replace(playPausePattern, [
                   'setupAudioSession()',
+                  '        DispatchQueue.main.async {',
+                  '            UIApplication.shared.beginReceivingRemoteControlEvents()',
+                  '        }',
                   '        player.play()',
                   '        updateNowPlayingInfo()',
                   '    }',
@@ -1162,9 +1184,24 @@ jobs:
                   '    }'
                 ].join("\n"));
               }
-              const replaceItemPattern = /player\.replaceCurrentItem\(with: item\)/;
+              const replaceItemPattern = /player\.replaceCurrentItem\(with: item\)[\s\S]*?player\.play\(\)/;
               if (replaceItemPattern.test(playerMgr)) {
-                playerMgr = playerMgr.replace(replaceItemPattern, 'setupAudioSession()\n        player.replaceCurrentItem(with: item)');
+                playerMgr = playerMgr.replace(
+                  replaceItemPattern,
+                  [
+                    'setupAudioSession()',
+                    '        DispatchQueue.main.async {',
+                    '            UIApplication.shared.beginReceivingRemoteControlEvents()',
+                    '        }',
+                    '        player.replaceCurrentItem(with: item)',
+                    '        if let startPos = startPosition, startPos > 0 {',
+                    '             let time = CMTime(seconds: startPos, preferredTimescale: 1000)',
+                    '             player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)',
+                    '        }',
+                    '        player.play()',
+                    '        updateNowPlayingInfo()'
+                  ].join("\n")
+                );
               }
               fs.writeFileSync(playerMgrPath, playerMgr, "utf8");
               console.log("✅ 已配置 OrpheusPlayerManager.swift 支持系统灵动岛飞入动画与 NowPlaying 同步");
@@ -1715,36 +1752,36 @@ jobs:
             let remoteItem = fs.readFileSync(remoteItemPath, "utf8");
             if (!remoteItem.includes("triggerHalo")) {
               remoteItem = remoteItem.replace(
-                "import { StyleSheet, View } from 'react-native'",
-                "import { StyleSheet, View } from 'react-native'\nimport Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated'"
+                /import\s*\{\s*StyleSheet,\s*(?:useColorScheme,\s*)?View\s*\}\s*from\s*['"]react-native['"]/,
+                "import { StyleSheet, useColorScheme, View } from 'react-native'\nimport Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated'"
               );
               remoteItem = remoteItem.replace(
-                "const onPress = useCallback(() => {\n\t\tif (disabled) return\n\t\tplayTrack(data)\n\t}, [data, disabled, playTrack])",
+                "const isCurrentTrack = useIsCurrentTrack(data.uniqueKey)",
                 [
-                  "const haloScaleX = useSharedValue(0.1)",
+                  "const isCurrentTrack = useIsCurrentTrack(data.uniqueKey)",
+                  "",
+                  "  const haloScaleX = useSharedValue(0.1)",
                   "  const haloScaleY = useSharedValue(0.4)",
                   "  const haloOpacity = useSharedValue(0)",
                   "",
-                  "  const triggerHalo = useCallback(() => {",
+                  "  const triggerHalo = () => {",
                   "    haloScaleX.value = 0.1",
                   "    haloScaleY.value = 0.4",
                   "    haloOpacity.value = 0.3",
                   "    haloScaleX.value = withTiming(1.3, { duration: 380, easing: Easing.out(Easing.cubic) })",
                   "    haloScaleY.value = withTiming(1.0, { duration: 380, easing: Easing.out(Easing.cubic) })",
                   "    haloOpacity.value = withTiming(0, { duration: 420, easing: Easing.out(Easing.quad) })",
-                  "  }, [haloOpacity, haloScaleX, haloScaleY])",
+                  "  }",
                   "",
                   "  const haloStyle = useAnimatedStyle(() => ({",
                   "    transform: [{ scaleX: haloScaleX.value }, { scaleY: haloScaleY.value }],",
                   "    opacity: haloOpacity.value,",
-                  "  }))",
-                  "",
-                  "  const onPress = useCallback(() => {",
-                  "    if (disabled) return",
-                  "    triggerHalo()",
-                  "    playTrack(data)",
-                  "  }, [data, disabled, playTrack, triggerHalo])"
+                  "  }))"
                 ].join("\n")
+              );
+              remoteItem = remoteItem.replace(
+                "onPress={() => {",
+                "onPress={() => {\n        triggerHalo()"
               );
               remoteItem = remoteItem.replace(
                 "<View style={styles.itemContainer}>",
@@ -1764,7 +1801,7 @@ jobs:
                 ].join("\n")
               );
               fs.writeFileSync(remoteItemPath, remoteItem, "utf8");
-              console.log("✅ 已为 PlaylistItem.tsx 添加 Flutter 风格单曲点击光晕扩散动效");
+              console.log("✅ 已为 PlaylistItem.tsx 添加 Flutter 风格单曲点击光晕扩散动效与 Animated 依赖导入");
             }
           }
 
