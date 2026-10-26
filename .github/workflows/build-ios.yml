@@ -2573,10 +2573,9 @@ jobs:
                 "import { MD3DarkTheme, MD3LightTheme, PaperProvider } from 'react-native-paper'\nimport { DarkTheme as NavDarkTheme, DefaultTheme as NavDefaultTheme, ThemeProvider as NavigationThemeProvider } from 'expo-router'"
               );
               providersCode = providersCode.replace(
-                "export default function AppProviders({ children }: { children: ReactNode }) {",
+                "\n\treturn (\n\t\t<SafeAreaProvider>",
                 [
-                  "export default function AppProviders({ children }: { children: ReactNode }) {",
-                  "  const colorScheme = useColorScheme()",
+                  "",
                   "  const navigationTheme = useMemo(() => {",
                   "    const base = colorScheme === 'dark' ? NavDarkTheme : NavDefaultTheme",
                   "    return {",
@@ -2592,7 +2591,10 @@ jobs:
                   "        notification: colorScheme === 'dark' ? '#ff453a' : '#ff3b30',",
                   "      },",
                   "    }",
-                  "  }, [colorScheme, paperTheme])"
+                  "  }, [colorScheme, paperTheme])",
+                  "",
+                  "\treturn (",
+                  "\t\t<SafeAreaProvider>"
                 ].join("\n")
               );
               providersCode = providersCode.replace(
