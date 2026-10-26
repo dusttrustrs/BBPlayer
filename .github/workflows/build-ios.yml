@@ -351,8 +351,8 @@ jobs:
             }
           }
 
-          // 2. 修复 app.config.ts：声明 UIAppFonts、ExpoShareIntoAppGroupId 以及 UIBackgroundModes (audio)
-          // 彻底解决 iOS 字体缺失、共享 App Group 报错以及后台播放被系统挂起（返回桌面立即暂停）的问题。
+          // 2. 修复 app.config.ts：声明 UIAppFonts、ExpoShareIntoAppGroupId、UIBackgroundModes (audio) 与 enableSceneSupport (UIScene)
+          // 彻底解决 iOS 字体缺失、共享 App Group 报错、后台播放被系统挂起以及 iOS 27 启动断言闪退问题。
           const configPath = "apps/mobile/app.config.ts";
           if (fs.existsSync(configPath)) {
             let cfg = fs.readFileSync(configPath, "utf8");
@@ -362,15 +362,20 @@ jobs:
                 "ios: {",
                 "      infoPlist: {",
                 "        UIAppFonts: ['MaterialDesignIcons.ttf'],",
+                "        UIFileSharingEnabled: true,\n        LSSupportsOpeningDocumentsInPlace: true,",
                 "        ExpoShareIntoAppGroupId: 'group.com.roitium.bbplayer',",
                 "        UIBackgroundModes: ['audio'],\n        NSSupportsLiveActivities: true,\n        NSSupportsLiveActivitiesFrequentUpdates: true,",
                 "      },",
                 "      bundleIdentifier:"
               ].join("\n");
               cfg = cfg.replace(iosPattern, iosBlock);
-              fs.writeFileSync(configPath, cfg, "utf8");
-              console.log("✅ 已向 app.config.ts 注入 UIAppFonts, ExpoShareIntoAppGroupId 与 UIBackgroundModes(audio)");
             }
+            if (cfg.includes("useFrameworks: 'static'") && !cfg.includes("enableSceneSupport: true")) {
+              cfg = cfg.replace("useFrameworks: 'static'", "useFrameworks: 'static',\n\t\t\t\t\tenableSceneSupport: true");
+              console.log("✅ 已向 app.config.ts 注入 enableSceneSupport: true (启用 UIScene 生命周期支持)");
+            }
+            fs.writeFileSync(configPath, cfg, "utf8");
+            console.log("✅ 已向 app.config.ts 注入 UIAppFonts, ExpoShareIntoAppGroupId 与 UIBackgroundModes(audio)");
           }
 
           // 3. 修复 WavySlider 在 iOS 端的平滑拖动与原生触控 (彻底消除卡顿、跳跃与回弹)：
@@ -2795,49 +2800,448 @@ jobs:
                 "import { formatRelativeTime } from '@/utils/time'\nimport { resolveBilibiliImageUrl } from '@/utils/imageUrl'"
               );
             }
+            if (!commentCode.includes("expo-file-system/legacy")) {
+              commentCode = "import * as FileSystem from 'expo-file-system/legacy'\nimport * as MediaLibrary from 'expo-media-library'\nimport toast from '@/utils/toast'\n" + commentCode;
+            }
+            if (!commentCode.includes("Icon as PaperIcon")) {
+              commentCode = commentCode.replace(
+                "import { Text, useTheme } from 'react-native-paper'",
+                "import { Icon as PaperIcon, Text, useTheme } from 'react-native-paper'"
+              );
+            }
+            if (!commentCode.includes("Modal,")) {
+              commentCode = commentCode.replace(
+                "import { Appearance, StyleSheet, TouchableOpacity, View } from 'react-native'",
+                "import { Appearance, Modal, SafeAreaView, StyleSheet, TouchableOpacity, View } from 'react-native'"
+              );
+            }
+            if (!commentCode.includes("viewerIndex")) {
+              commentCode = commentCode.replace(
+                "const [liked, setLiked] = useState(item.action === 1)",
+                "const [liked, setLiked] = useState(item.action === 1)\n  const [viewerIndex, setViewerIndex] = useState<number | null>(null)\n  const [isSaving, setIsSaving] = useState(false)"
+              );
+            }
             const oldPicturesBlock = /\{item\.content\.pictures && item\.content\.pictures\.length > 0 && \([\s\S]*?<\/View>\s*\)\}/;
             const newPicturesBlock = [
               "{item.content.pictures && item.content.pictures.length > 0 && (",
               "            <View style={styles.imagesContainer}>",
-              "              <Galeria",
-              "                urls={item.content.pictures.map((pic) => resolveBilibiliImageUrl(pic.img_src, 1200) ?? (pic.img_src?.startsWith('//') ? `https:${pic.img_src}` : pic.img_src?.replace(/^http:/, 'https:')) ?? '')}",
-              "                theme={darkMode ? 'dark' : 'light'}",
-              "              >",
-              "                {item.content.pictures.map((pic, index) => {",
-              "                  const formattedUrl = resolveBilibiliImageUrl(pic.img_src, 600) ?? (pic.img_src?.startsWith('//') ? `https:${pic.img_src}` : pic.img_src?.replace(/^http:/, 'https:')) ?? ''",
-              "                  return (",
-              "                    /* oxlint-disable-next-line @typescript-eslint/unbound-method */",
-              "                    <Galeria.Image",
-              "                      index={index}",
-              "                      // oxlint-disable-next-line react/no-array-index-key",
-              "                      key={index}",
-              "                      style={styles.commentImage}",
-              "                    >",
-              "                      <View",
-              "                        style={[styles.commentImage, { backgroundColor: darkMode ? '#262626' : '#f0f0f0' }]}",
-              "                        testID='comment-image'",
-              "                      >",
-              "                        <Image",
-              "                          source={{",
-              "                            uri: formattedUrl,",
-              "                            headers: { Referer: 'https://www.bilibili.com' },",
-              "                          }}",
-              "                          style={styles.commentImageInner}",
-              "                          contentFit='cover'",
-              "                          cachePolicy='disk'",
-              "                        />",
-              "                      </View>",
-              "                      {/* oxlint-disable-next-line @typescript-eslint/unbound-method */}",
-              "                    </Galeria.Image>",
-              "                  )",
-              "                })}",
-              "              </Galeria>",
+              "              {item.content.pictures.map((pic, index) => {",
+              "                const formattedUrl =",
+              "                  resolveBilibiliImageUrl(pic.img_src, 600) ??",
+              "                  (pic.img_src?.startsWith('//')",
+              "                    ? `https:${pic.img_src}`",
+              "                    : pic.img_src?.replace(/^http:/, 'https:')) ??",
+              "                  ''",
+              "                return (",
+              "                  <TouchableOpacity",
+              "                    key={index}",
+              "                    activeOpacity={0.85}",
+              "                    onPress={() => setViewerIndex(index)}",
+              "                    style={[",
+              "                      styles.commentImage,",
+              "                      { backgroundColor: darkMode ? '#262626' : '#f0f0f0' },",
+              "                    ]}",
+              "                    testID='comment-image'",
+              "                  >",
+              "                    <Image",
+              "                      source={{",
+              "                        uri: formattedUrl,",
+              "                        headers: { Referer: 'https://www.bilibili.com' },",
+              "                      }}",
+              "                      style={styles.commentImageInner}",
+              "                      contentFit='cover'",
+              "                      cachePolicy='disk'",
+              "                    />",
+              "                  </TouchableOpacity>",
+              "                )",
+              "              })}",
               "            </View>",
+              "          )}",
+              "",
+              "          {item.content.pictures && item.content.pictures.length > 0 && viewerIndex !== null && (",
+              "            <Modal",
+              "              visible={viewerIndex !== null}",
+              "              transparent",
+              "              animationType='fade'",
+              "              onRequestClose={() => setViewerIndex(null)}",
+              "              statusBarTranslucent",
+              "            >",
+              "              <View style={styles.viewerModalContainer}>",
+              "                <SafeAreaView style={styles.viewerTopBar}>",
+              "                  <IconButton",
+              "                    icon='close'",
+              "                    size={24}",
+              "                    iconColor='#ffffff'",
+              "                    onPress={() => setViewerIndex(null)}",
+              "                  />",
+              "                  {item.content.pictures.length > 1 && (",
+              "                    <Text style={styles.viewerPageIndicator}>",
+              "                      {viewerIndex + 1} / {item.content.pictures.length}",
+              "                    </Text>",
+              "                  )}",
+              "                  <View style={{ width: 48 }} />",
+              "                </SafeAreaView>",
+              "",
+              "                <View style={styles.viewerImageContainer}>",
+              "                  {item.content.pictures.length > 1 && viewerIndex > 0 && (",
+              "                    <TouchableOpacity",
+              "                      style={[styles.viewerNavArrow, { left: 16 }]}",
+              "                      onPress={() => setViewerIndex(viewerIndex - 1)}",
+              "                    >",
+              "                      <IconButton",
+              "                        icon='chevron-left'",
+              "                        size={28}",
+              "                        iconColor='#ffffff'",
+              "                      />",
+              "                    </TouchableOpacity>",
+              "                  )}",
+              "",
+              "                  <Image",
+              "                    source={{",
+              "                      uri:",
+              "                        resolveBilibiliImageUrl(",
+              "                          item.content.pictures[viewerIndex]?.img_src,",
+              "                          1600,",
+              "                        ) ??",
+              "                        (item.content.pictures[viewerIndex]?.img_src?.startsWith('//')",
+              "                          ? `https:${item.content.pictures[viewerIndex]?.img_src}`",
+              "                          : item.content.pictures[viewerIndex]?.img_src?.replace(",
+              "                              /^http:/,",
+              "                              'https:'",
+              "                            )) ??",
+              "                        '',",
+              "                      headers: { Referer: 'https://www.bilibili.com' },",
+              "                    }}",
+              "                    style={styles.viewerImage}",
+              "                    contentFit='contain'",
+              "                    cachePolicy='disk'",
+              "                  />",
+              "",
+              "                  {item.content.pictures.length > 1 &&",
+              "                    viewerIndex < item.content.pictures.length - 1 && (",
+              "                      <TouchableOpacity",
+              "                        style={[styles.viewerNavArrow, { right: 16 }]}",
+              "                        onPress={() => setViewerIndex(viewerIndex + 1)}",
+              "                      >",
+              "                        <IconButton",
+              "                          icon='chevron-right'",
+              "                          size={28}",
+              "                          iconColor='#ffffff'",
+              "                        />",
+              "                      </TouchableOpacity>",
+              "                    )}",
+              "                </View>",
+              "",
+              "                <SafeAreaView style={styles.viewerBottomBar}>",
+              "                  <TouchableOpacity",
+              "                    style={styles.downloadButton}",
+              "                    disabled={isSaving}",
+              "                    onPress={async () => {",
+              "                      if (",
+              "                        viewerIndex === null ||",
+              "                        !item.content.pictures?.[viewerIndex]",
+              "                      )",
+              "                        return",
+              "                      const rawSrc = item.content.pictures[viewerIndex].img_src",
+              "                      const targetUrl =",
+              "                        resolveBilibiliImageUrl(rawSrc, 1600) ??",
+              "                        (rawSrc?.startsWith('//')",
+              "                          ? `https:${rawSrc}`",
+              "                          : rawSrc?.replace(/^http:/, 'https:')) ??",
+              "                        ''",
+              "                      if (!targetUrl) return",
+
+              "                      try {",
+              "                        setIsSaving(true)",
+              "                        const permission =",
+              "                          await MediaLibrary.requestPermissionsAsync()",
+              "                        if (!permission.granted) {",
+              "                          toast.error('需要相册访问权限才能保存图片')",
+              "                          return",
+              "                        }",
+              "                        const filename = `bilibili_${Date.now()}.jpg`",
+              "                        const fileUri = `${FileSystem.cacheDirectory}${filename}`",
+              "                        const res = await FileSystem.downloadAsync(",
+              "                          targetUrl,",
+              "                          fileUri,",
+              "                          { headers: { Referer: 'https://www.bilibili.com' } },",
+              "                        )",
+              "                        await MediaLibrary.saveToLibraryAsync(res.uri)",
+              "                        toast.success('图片已成功保存到相册')",
+              "                      } catch (err) {",
+              "                        toastAndLogError(",
+              "                          '保存图片失败',",
+              "                          err,",
+              "                          'Comments.DownloadImage',",
+              "                        )",
+              "                      } finally {",
+              "                        setIsSaving(false)",
+              "                      }",
+              "                    }}",
+              "                  >",
+              "                    <PaperIcon source='download' size={20} color='#ffffff' />",
+              "                    <Text style={styles.downloadButtonText}>",
+              "                      {isSaving ? '正在保存...' : '下载图片'}",
+              "                    </Text>",
+              "                  </TouchableOpacity>",
+              "                </SafeAreaView>",
+              "              </View>",
+              "            </Modal>",
               "          )}"
             ].join("\n");
             commentCode = commentCode.replace(oldPicturesBlock, newPicturesBlock);
+
+            if (!commentCode.includes("viewerModalContainer")) {
+              const viewerStyles = [
+                "  viewerModalContainer: {",
+                "    flex: 1,",
+                "    backgroundColor: 'rgba(0, 0, 0, 0.95)',",
+                "    justifyContent: 'space-between',",
+                "  },",
+                "  viewerTopBar: {",
+                "    flexDirection: 'row',",
+                "    alignItems: 'center',",
+                "    justifyContent: 'space-between',",
+                "    paddingHorizontal: 8,",
+                "    paddingTop: 8,",
+                "    zIndex: 10,",
+                "  },",
+                "  viewerPageIndicator: {",
+                "    color: '#ffffff',",
+                "    fontSize: 16,",
+                "    fontWeight: '600',",
+                "  },",
+                "  viewerImageContainer: {",
+                "    flex: 1,",
+                "    justifyContent: 'center',",
+                "    alignItems: 'center',",
+                "    position: 'relative',",
+                "  },",
+                "  viewerImage: {",
+                "    width: '100%',",
+                "    height: '100%',",
+                "  },",
+                "  viewerNavArrow: {",
+                "    position: 'absolute',",
+                "    zIndex: 10,",
+                "    backgroundColor: 'rgba(0, 0, 0, 0.4)',",
+                "    borderRadius: 24,",
+                "  },",
+                "  viewerBottomBar: {",
+                "    alignItems: 'center',",
+                "    justifyContent: 'center',",
+                "    paddingBottom: 24,",
+                "    zIndex: 10,",
+                "  },",
+                "  downloadButton: {",
+                "    flexDirection: 'row',",
+                "    alignItems: 'center',",
+                "    justifyContent: 'center',",
+                "    backgroundColor: 'rgba(255, 255, 255, 0.22)',",
+                "    paddingHorizontal: 24,",
+                "    paddingVertical: 12,",
+                "    borderRadius: 28,",
+                "    gap: 8,",
+                "  },",
+                "  downloadButtonText: {",
+                "    color: '#ffffff',",
+                "    fontSize: 15,",
+                "    fontWeight: 'bold',",
+                "  },"
+              ].join("\n");
+              commentCode = commentCode.replace("const styles = StyleSheet.create({", "const styles = StyleSheet.create({\n" + viewerStyles);
+            }
             fs.writeFileSync(commentItemPath, commentCode, "utf8");
-            console.log("✅ 已在 CommentItem.tsx 中修复评论区图片空白问题");
+            console.log("✅ 已在 CommentItem.tsx 中实现评论区图片点击放大与保存图片");
+          }
+
+          // 26. 增强下载音频文件在 iOS 系统「文件」App 中的可见性：
+          const downloadMgrPath = "packages/orpheus/ios/OrpheusDownloadManager.swift";
+          if (fs.existsSync(downloadMgrPath)) {
+            let dlCode = fs.readFileSync(downloadMgrPath, "utf8");
+            const targetMove = "try fileManager.moveItem(at: location, to: dest)";
+            if (dlCode.includes(targetMove) && !dlCode.includes("musicDir.appendingPathComponent")) {
+              const moveReplacement = [
+                "try fileManager.moveItem(at: location, to: dest)",
+                "            ",
+                "            // 同时在 Documents/Music 中为文件 App 维护可读命名的音频副本",
+                "            let musicDir = docs.appendingPathComponent(\"Music\")",
+                "            try? fileManager.createDirectory(at: musicDir, withIntermediateDirectories: true)",
+                "            if let t = trackMap[id] {",
+                "                let safeTitle = (t.title ?? id).replacingOccurrences(of: \"/\", with: \"_\").replacingOccurrences(of: \":\", with: \"_\").replacingOccurrences(of: \"\\\\\", with: \"_\")",
+                "                let safeArtist = t.artist?.replacingOccurrences(of: \"/\", with: \"_\").replacingOccurrences(of: \":\", with: \"_\").replacingOccurrences(of: \"\\\\\", with: \"_\")",
+                "                let cleanName = (safeArtist != nil && !safeArtist!.isEmpty) ? \"\\(safeArtist!) - \\(safeTitle).m4a\" : \"\\(safeTitle).m4a\"",
+                "                let musicDest = musicDir.appendingPathComponent(cleanName)",
+                "                try? fileManager.removeItem(at: musicDest)",
+                "                try? fileManager.copyItem(at: dest, to: musicDest)",
+                "            }"
+              ].join("\n");
+              dlCode = dlCode.replace(targetMove, moveReplacement);
+              fs.writeFileSync(downloadMgrPath, dlCode, "utf8");
+              console.log("✅ 已在 OrpheusDownloadManager.swift 中实现下载音频自动同步到 Music 目录");
+            }
+          }
+
+          // 27. 在已下载界面 (downloaded.tsx) 中支持 iOS 单曲与批量音频导出、系统分享：
+          const downloadedPath = "apps/mobile/src/app/downloaded.tsx";
+          if (fs.existsSync(downloadedPath)) {
+            let dlPageCode = fs.readFileSync(downloadedPath, "utf8");
+            if (!dlPageCode.includes("expo-sharing")) {
+              dlPageCode = "import * as Sharing from 'expo-sharing'\nimport * as FileSystem from 'expo-file-system/legacy'\n" + dlPageCode;
+            }
+            const oldSingleExport = /const handleSingleExport = useCallback\([\s\S]*?\[resolveExportDestination\],\s*\)/;
+            const newSingleExport = [
+              "const handleSingleExport = useCallback(",
+              "    async (id: string) => {",
+              "      if (Platform.OS === 'ios') {",
+              "        const task = completedTasks.find((t) => t.id === id)",
+              "        if (!task) {",
+              "          toast.error('未找到对应下载任务')",
+              "          return",
+              "        }",
+              "        const title = task.track?.title ?? id",
+              "        const artist = task.track?.artist ?? ''",
+              "        const safeTitle = (artist ? `${artist} - ${title}` : title)",
+              "          .replace(/[\\/:*?\"<>|]/g, '_')",
+              "          .trim()",
+              "        const sourceUri = `${FileSystem.documentDirectory}downloads/${id}.mp4`",
+              "        const exportDir = `${FileSystem.documentDirectory}Music/`",
+              "        const exportUri = `${exportDir}${safeTitle}.m4a`",
+              "",
+              "        try {",
+              "          const dirInfo = await FileSystem.getInfoAsync(exportDir)",
+              "          if (!dirInfo.exists) {",
+              "            await FileSystem.makeDirectoryAsync(exportDir, { intermediates: true })",
+              "          }",
+              "          const srcInfo = await FileSystem.getInfoAsync(sourceUri)",
+              "          if (!srcInfo.exists) {",
+              "            toast.error('未找到本地音频源文件')",
+              "            return",
+              "          }",
+              "          await FileSystem.copyAsync({ from: sourceUri, to: exportUri })",
+              "          if (await Sharing.isAvailableAsync()) {",
+              "            await Sharing.shareAsync(exportUri, {",
+              "              mimeType: 'audio/mp4',",
+              "              dialogTitle: `导出歌曲 - ${title}`,",
+              "              UTI: 'public.audio',",
+              "            })",
+              "          } else {",
+              "            toast.success(`歌曲已导出至「文件 - 我的 iPhone - BBPlayer - Music」`)",
+              "          }",
+              "        } catch (error) {",
+              "          toastAndLogError('导出音频失败', error, 'Downloaded.Export')",
+              "        }",
+              "        return",
+              "      }",
+              "",
+              "      const directoryUri = await resolveExportDestination()",
+              "      if (directoryUri) {",
+              "        setExportConfig({ ids: [id], destinationUri: directoryUri })",
+              "        void exportSheetRef.current?.present()",
+              "      }",
+              "    },",
+              "    [completedTasks, resolveExportDestination],",
+              "  )"
+            ].join("\n");
+            dlPageCode = dlPageCode.replace(oldSingleExport, newSingleExport);
+
+            const oldHandleExport = /const handleExport = async \(\) => {[\s\S]*?void exportSheetRef\.current\?\.present\(\)\s*if \(selectMode\) {\s*exitSelectMode\(\)\s*}\s*}\s*}/;
+            const newHandleExport = [
+              "const handleExport = async () => {",
+              "    const idsToExport =",
+              "      selected.size > 0 ? Array.from(selected) : completedTasks.map((t) => t.id)",
+              "",
+              "    if (idsToExport.length === 0) {",
+              "      if (Platform.OS === 'android') {",
+              "        ToastAndroid.showWithGravity(",
+              "          '没有可导出的歌曲',",
+              "          ToastAndroid.SHORT,",
+              "          ToastAndroid.BOTTOM,",
+              "        )",
+              "      } else {",
+              "        Alert.alert('提示', '没有可导出的歌曲')",
+              "      }",
+              "      return",
+              "    }",
+
+              "    if (Platform.OS === 'ios') {",
+              "      try {",
+              "        const exportDir = `${FileSystem.documentDirectory}Music/`",
+              "        const dirInfo = await FileSystem.getInfoAsync(exportDir)",
+              "        if (!dirInfo.exists) {",
+              "          await FileSystem.makeDirectoryAsync(exportDir, { intermediates: true })",
+              "        }",
+
+              "        let successCount = 0",
+              "        let lastExportUri = ''",
+              "        for (const id of idsToExport) {",
+              "          const task = completedTasks.find((t) => t.id === id)",
+              "          const title = task?.track?.title ?? id",
+              "          const artist = task?.track?.artist ?? ''",
+              "          const safeTitle = (artist ? `${artist} - ${title}` : title)",
+              "            .replace(/[\\/:*?\"<>|]/g, '_')",
+              "            .trim()",
+              "          const sourceUri = `${FileSystem.documentDirectory}downloads/${id}.mp4`",
+              "          const exportUri = `${exportDir}${safeTitle}.m4a`",
+
+              "          const fileInfo = await FileSystem.getInfoAsync(sourceUri)",
+              "          if (fileInfo.exists) {",
+              "            await FileSystem.copyAsync({ from: sourceUri, to: exportUri })",
+              "            successCount++",
+              "            lastExportUri = exportUri",
+              "          }",
+              "        }",
+
+              "        if (selectMode) {",
+              "          exitSelectMode()",
+              "        }",
+
+              "        if (successCount === 1 && lastExportUri && (await Sharing.isAvailableAsync())) {",
+              "          await Sharing.shareAsync(lastExportUri, {",
+              "            mimeType: 'audio/mp4',",
+              "            UTI: 'public.audio',",
+              "          })",
+              "        } else {",
+              "          Alert.alert(",
+              "            '导出成功',",
+              "            `已将 ${successCount} 首歌曲导出到「文件」App 的「我的 iPhone - BBPlayer - Music」目录中，您可在系统“文件”中直接浏览或播放。`,",
+              "            [",
+              "              { text: '知道了' },",
+              "              ...(lastExportUri && (await Sharing.isAvailableAsync())",
+              "                ? [",
+              "                    {",
+              "                      text: '分享最近一首',",
+              "                      onPress: async () => {",
+              "                        await Sharing.shareAsync(lastExportUri, {",
+              "                          mimeType: 'audio/mp4',",
+              "                          UTI: 'public.audio',",
+              "                        })",
+              "                      },",
+              "                    },",
+              "                  ]",
+              "                : []),",
+              "            ],",
+              "          )",
+              "        }",
+              "      } catch (error) {",
+              "        toastAndLogError('批量导出音频失败', error, 'Downloaded.Export')",
+              "      }",
+              "      return",
+              "    }",
+
+              "    const directoryUri = await resolveExportDestination()",
+              "    if (directoryUri) {",
+              "      setExportConfig({ ids: idsToExport, destinationUri: directoryUri })",
+              "      void exportSheetRef.current?.present()",
+              "      if (selectMode) {",
+              "        exitSelectMode()",
+              "      }",
+              "    }",
+              "  }"
+            ].join("\n");
+            dlPageCode = dlPageCode.replace(oldHandleExport, newHandleExport);
+            fs.writeFileSync(downloadedPath, dlPageCode, "utf8");
+            console.log("✅ 已在 downloaded.tsx 中实现 iOS 单曲与批量导出音频");
           }
 
           EOF
@@ -2909,6 +3313,13 @@ jobs:
               execSync(`/usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "${plistPath}" 2>/dev/null || true`);
               console.log("✅ PlistBuddy: 已追加 UIBackgroundModes (audio 后台播放)");
             }
+            content = fs.readFileSync(plistPath, "utf8");
+            if (!content.includes("UIApplicationSceneManifest")) {
+              const sceneManifestXml = "\\t<key>UIApplicationSceneManifest</key>\\n\\t<dict>\\n\\t\\t<key>UIApplicationSupportsMultipleScenes</key>\\n\\t\\t<false/>\\n\\t\\t<key>UISceneConfigurations</key>\\n\\t\\t<dict>\\n\\t\\t\\t<key>UIWindowSceneSessionRoleApplication</key>\\n\\t\\t\\t<array>\\n\\t\\t\\t\\t<dict>\\n\\t\\t\\t\\t\\t<key>UISceneConfigurationName</key>\\n\\t\\t\\t\\t\\t<string>Default Configuration</string>\\n\\t\\t\\t\\t\\t<key>UISceneDelegateClassName</key>\\n\\t\\t\\t\\t\\t<string>EXExpoAppSceneDelegate</string>\\n\\t\\t\\t\\t</dict>\\n\\t\\t\\t</array>\\n\\t\\t</dict>\\n\\t</dict>\\n</dict>\\n</plist>";
+              content = content.replace(new RegExp("</dict>\\s*</plist>"), sceneManifestXml);
+              fs.writeFileSync(plistPath, content, "utf8");
+              console.log("✅ Info.plist: 已补齐 UIApplicationSceneManifest 配置 (解决 iOS 27 启动断言闪退)");
+            }
           }
 
           function findAppDelegate(dir) {
@@ -2919,7 +3330,7 @@ jobs:
               if (f.isDirectory()) {
                 const found = findAppDelegate(full);
                 if (found) return found;
-              } else if (f.name === "AppDelegate.mm" || f.name === "AppDelegate.m") {
+              } else if (f.name === "AppDelegate.swift" || f.name === "AppDelegate.mm" || f.name === "AppDelegate.m") {
                 return full;
               }
             }
@@ -2928,7 +3339,17 @@ jobs:
           const appDelegatePath = findAppDelegate("ios") || findAppDelegate("apps/mobile/ios");
           if (appDelegatePath) {
             let appDelegate = fs.readFileSync(appDelegatePath, "utf8");
-            if (appDelegate.includes("self.window.backgroundColor = [UIColor whiteColor];")) {
+            if (appDelegatePath.endsWith(".swift")) {
+              if (appDelegate.includes("class AppDelegate: ExpoAppDelegate {") && !appDelegate.includes("ExpoReactNativeFactoryProvider")) {
+                appDelegate = appDelegate.replace("class AppDelegate: ExpoAppDelegate {", "class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider {");
+                const windowStmt = /^[ \t]*window = UIWindow\(frame: UIScreen\.main\.bounds\)\r?\n/m;
+                const startStmt = /^[ \t]*factory\.startReactNative\([^)]*\)\r?\n/m;
+                const emptyWrapper = /^[ \t]*#if os\(iOS\) \|\| os\(tvOS\)\r?\n[ \t]*#endif\r?\n/m;
+                appDelegate = appDelegate.replace(windowStmt, "").replace(startStmt, "").replace(emptyWrapper, "");
+                fs.writeFileSync(appDelegatePath, appDelegate, "utf8");
+                console.log("✅ AppDelegate.swift: 已补全 ExpoReactNativeFactoryProvider 协议支持 (UIScene)");
+              }
+            } else if (appDelegate.includes("self.window.backgroundColor = [UIColor whiteColor];")) {
               appDelegate = appDelegate.replace(
                 "self.window.backgroundColor = [UIColor whiteColor];",
                 "self.window.backgroundColor = [UIColor systemBackgroundColor];"
