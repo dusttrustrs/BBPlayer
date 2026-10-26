@@ -3791,7 +3791,7 @@ jobs:
           const plistPath = findPlist("ios") || findPlist("apps/mobile/ios");
           if (plistPath) {
             console.log("🔍 检查生成的 Info.plist:", plistPath);
-            const content = fs.readFileSync(plistPath, "utf8");
+            let content = fs.readFileSync(plistPath, "utf8");
             if (!content.includes("MaterialDesignIcons.ttf")) {
               execSync(`/usr/libexec/PlistBuddy -c "Add :UIAppFonts array" "${plistPath}" 2>/dev/null || true`);
               execSync(`/usr/libexec/PlistBuddy -c "Add :UIAppFonts:0 string MaterialDesignIcons.ttf" "${plistPath}" 2>/dev/null || true`);
