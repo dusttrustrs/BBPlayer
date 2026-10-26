@@ -973,7 +973,7 @@ jobs:
           // 11. 开启 iOS 灵动岛系统动画、后台控制与音频中断互斥联动：
           // (a) 在主线程调用 UIApplication.shared.beginReceivingRemoteControlEvents() 注册系统控制权；
           // (b) 每次播放状态变化时，显式同步 MPNowPlayingInfoCenter.default().playbackState (.playing / .paused)，
-          //     配置 longFormAudio 与 setIsNowPlayingCandidate(true)，使 SpringBoard 识别前台 App 为活跃音频源，在向上滑动返回桌面时触发“飞入灵动岛”系统级流体动画；
+          //     配置 longFormAudio 与 setActive(true)，使 SpringBoard 识别前台 App 为活跃音频源，在向上滑动返回桌面时触发“飞入灵动岛”系统级流体动画；
           // (c) 在 play()、pause() 和 loadAvPlayerItem 中保持音频会话激活与实时更新状态；
           // (d) 在其他应用播放音频时互斥暂停，关闭联动时保留混音后台播放。
           const playerMgrPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
@@ -1008,9 +1008,6 @@ jobs:
                   '                try session.setCategory(.playback, mode: .default, options: options)',
                   '            } else {',
                   '                try session.setCategory(.playback, mode: .default, policy: .longFormAudio)',
-                  '            }',
-                  '            if #available(iOS 17.0, *) {',
-                  '                try? session.setIsNowPlayingCandidate(!isSimultaneousPlaybackAllowed)',
                   '            }',
                   '            try session.setActive(true)',
                   '            NotificationCenter.default.removeObserver(self, name: AVAudioSession.interruptionNotification, object: session)',
