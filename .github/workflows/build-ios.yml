@@ -455,7 +455,11 @@ jobs:
                 "    () =>",
                 "      PanResponder.create({",
                 "        onStartShouldSetPanResponder: () => enabled,",
+                "        onStartShouldSetPanResponderCapture: () => enabled,",
                 "        onMoveShouldSetPanResponder: (_, gestureState) => {",
+                "          return enabled && (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) < 15)",
+                "        },",
+                "        onMoveShouldSetPanResponderCapture: (_, gestureState) => {",
                 "          return enabled && (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) < 15)",
                 "        },",
                 "        onPanResponderTerminationRequest: () => false,",
@@ -2550,13 +2554,52 @@ jobs:
                 "screenOptions={{ headerShown: false }}",
                 "screenOptions={{\n\t\t\t\t\t\theaderShown: false,\n\t\t\t\t\t\tcontentStyle: { backgroundColor: appBg },\n\t\t\t\t\t}}"
               );
-              fs.writeFileSync(rootLayoutPath, layoutCode, "utf8");
-              console.log("✅ 已在 _layout.tsx 中为 Stack 设置 contentStyle 背景色");
             }
+            if (!layoutCode.includes("name='(tabs)'\n\t\t\t\t\t\t\toptions={{\n\t\t\t\t\t\t\t\theaderShown: false,\n\t\t\t\t\t\t\t\tcontentStyle")) {
+              layoutCode = layoutCode.replace(
+                /name=['"]\(tabs\)['"]\s*options=\{\{\s*headerShown:\s*false\s*\}\}/,
+                "name='(tabs)'\n\t\t\t\t\t\t\toptions={{\n\t\t\t\t\t\t\t\theaderShown: false,\n\t\t\t\t\t\t\t\tcontentStyle: { backgroundColor: appBg },\n\t\t\t\t\t\t\t}}"
+              );
+            }
+            fs.writeFileSync(rootLayoutPath, layoutCode, "utf8");
+            console.log("✅ 已在 _layout.tsx 中为 Stack 和 (tabs) 设置 contentStyle 背景色");
           }
           const providersPath = "apps/mobile/src/components/providers.tsx";
           if (fs.existsSync(providersPath)) {
             let providersCode = fs.readFileSync(providersPath, "utf8");
+            if (!providersCode.includes("NavigationThemeProvider")) {
+              providersCode = providersCode.replace(
+                "import { MD3DarkTheme, MD3LightTheme, PaperProvider } from 'react-native-paper'",
+                "import { MD3DarkTheme, MD3LightTheme, PaperProvider } from 'react-native-paper'\nimport { DarkTheme as NavDarkTheme, DefaultTheme as NavDefaultTheme, ThemeProvider as NavigationThemeProvider } from 'expo-router'"
+              );
+              providersCode = providersCode.replace(
+                "export default function AppProviders({ children }: { children: ReactNode }) {",
+                [
+                  "export default function AppProviders({ children }: { children: ReactNode }) {",
+                  "  const colorScheme = useColorScheme()",
+                  "  const navigationTheme = useMemo(() => {",
+                  "    const base = colorScheme === 'dark' ? NavDarkTheme : NavDefaultTheme",
+                  "    return {",
+                  "      ...base,",
+                  "      dark: colorScheme === 'dark',",
+                  "      colors: {",
+                  "        ...base.colors,",
+                  "        background: String(paperTheme.colors.background),",
+                  "        card: String(paperTheme.colors.elevation.level1),",
+                  "        text: String(paperTheme.colors.onSurface),",
+                  "        border: String(paperTheme.colors.outlineVariant),",
+                  "        primary: String(paperTheme.colors.primary),",
+                  "        notification: colorScheme === 'dark' ? '#ff453a' : '#ff3b30',",
+                  "      },",
+                  "    }",
+                  "  }, [colorScheme, paperTheme])"
+                ].join("\n")
+              );
+              providersCode = providersCode.replace(
+                "<PaperProvider theme={paperTheme}>\n\t\t\t\t\t\t\t\t\t{__DEV__ ? <DevTools /> : null}\n\t\t\t\t\t\t\t\t\t<ShakeProfiler />\n\t\t\t\t\t\t\t\t\t{children}\n\t\t\t\t\t\t\t\t</PaperProvider>",
+                "<NavigationThemeProvider value={navigationTheme as any}>\n\t\t\t\t\t\t\t\t\t<PaperProvider theme={paperTheme}>\n\t\t\t\t\t\t\t\t\t\t{__DEV__ ? <DevTools /> : null}\n\t\t\t\t\t\t\t\t\t\t<ShakeProfiler />\n\t\t\t\t\t\t\t\t\t\t{children}\n\t\t\t\t\t\t\t\t\t</PaperProvider>\n\t\t\t\t\t\t\t\t</NavigationThemeProvider>"
+              );
+            }
             if (!providersCode.includes("backgroundColor: paperTheme.colors.background")) {
               providersCode = providersCode.replace(
                 "<View style={styles.container}>",
@@ -2566,83 +2609,86 @@ jobs:
                 "<GestureHandlerRootView style={styles.container}>",
                 "<GestureHandlerRootView style={[styles.container, { backgroundColor: paperTheme.colors.background }]}>"
               );
-              fs.writeFileSync(providersPath, providersCode, "utf8");
-              console.log("✅ 已在 providers.tsx 中为根容器补齐主题背景色");
+            }
+            fs.writeFileSync(providersPath, providersCode, "utf8");
+            console.log("✅ 已在 providers.tsx 中注入 NavigationThemeProvider 与根容器主题背景色");
+          }
+
+                    // 23. 修复音乐播放界面进度条拖拽与滑动切换歌词手势冲突 (彻底避免任何违规改写 panGestureRecognizer.delegate 导致 iOS 27 闪退)：
+          // 原理：通过 Legend-State 响应式状态 playerSliderDragging$ 联动 PagerView 的 scrollEnabled 属性。
+          // 当手指在进度条拖拽时，PagerView 自动暂停横向切页响应；松手后立即恢复，杜绝手势竞争且 100% 原生安全无崩溃。
+          const playbackStorePath = "apps/mobile/src/hooks/stores/playbackContextStore.ts";
+          if (fs.existsSync(playbackStorePath)) {
+            let pbStore = fs.readFileSync(playbackStorePath, "utf8");
+            if (!pbStore.includes("playerSliderDragging$")) {
+              pbStore = pbStore.replace(
+                /export const playbackContextStore\$ = observable<PlaybackContextState>\(\{[\s\S]*?\}\)/,
+                (m) => m + "\n\nexport const playerSliderDragging$ = observable<boolean>(false)"
+              );
+              fs.writeFileSync(playbackStorePath, pbStore, "utf8");
+              console.log("✅ 已向 playbackContextStore.ts 注入 playerSliderDragging$ 状态");
             }
           }
 
-                    // 23. 修复音乐播放界面进度条拖拽与滑动切换歌词手势冲突（仅在进度条区域屏蔽 PagerView 滑动手势）：
           const playerSliderPath = "apps/mobile/src/features/player/components/main/PlayerSlider.tsx";
           if (fs.existsSync(playerSliderPath)) {
             let playerSlider = fs.readFileSync(playerSliderPath, "utf8");
-            if (!playerSlider.includes('testID="player-slider"')) {
+            if (!playerSlider.includes("playerSliderDragging$")) {
               playerSlider = playerSlider.replace(
-                "<View style={podcast ? styles.podcastSliderRow : undefined}>",
-                '<View testID="player-slider" style={podcast ? styles.podcastSliderRow : undefined}>'
+                "import { seekWithinTrack } from '@/lib/player/seek'",
+                "import { seekWithinTrack } from '@/lib/player/seek'\nimport { playerSliderDragging$ } from '@/hooks/stores/playbackContextStore'"
+              );
+              playerSlider = playerSlider.replace(
+                /isNativeDragging\.set\(dragging\)\s*if \(!dragging\) isScrubbing\.set\(false\)/,
+                "isNativeDragging.set(dragging)\n\t\t\tif (!dragging) isScrubbing.set(false)\n\t\t\tscheduleOnRN(() => {\n\t\t\t\tplayerSliderDragging$.set(dragging)\n\t\t\t})"
               );
               fs.writeFileSync(playerSliderPath, playerSlider, "utf8");
-              console.log("✅ 已在 PlayerSlider.tsx 中为进度条添加 player-slider 标识以屏蔽歌词手势冲突");
+              console.log("✅ 已在 PlayerSlider.tsx 中绑定 playerSliderDragging$ 联动");
             }
           }
+
+          const playerPagePath = "apps/mobile/src/app/player.tsx";
+          if (fs.existsSync(playerPagePath)) {
+            let playerPage = fs.readFileSync(playerPagePath, "utf8");
+            if (!playerPage.includes("playerSliderDragging$")) {
+              playerPage = playerPage.replace(
+                "import { playbackContextStore$ } from '@/hooks/stores/playbackContextStore'",
+                "import { playbackContextStore$, playerSliderDragging$ } from '@/hooks/stores/playbackContextStore'"
+              );
+              playerPage = playerPage.replace(
+                /scrollEnabled=\{\s*playbackContextStore\$\.context\.mode\.get\(\)\s*!==\s*'podcast'\s*\}/,
+                "scrollEnabled={\n\t\t\t\t\t\t\t\t\tplaybackContextStore$.context.mode.get() !== 'podcast' &&\n\t\t\t\t\t\t\t\t\t!playerSliderDragging$.get()\n\t\t\t\t\t\t\t\t}"
+              );
+              fs.writeFileSync(playerPagePath, playerPage, "utf8");
+              console.log("✅ 已在 player.tsx 中为 AnimatedPagerView 绑定 !playerSliderDragging$.get() 互斥");
+            }
+          }
+
           try {
             const pagerPkgPath = require.resolve("react-native-pager-view/package.json", { paths: ["apps/mobile"] });
             const pagerIosDir = path.join(path.dirname(pagerPkgPath), "ios");
-            const scrollDelPath = path.join(pagerIosDir, "PagerScrollDelegate.swift");
-            if (fs.existsSync(scrollDelPath)) {
-              let scrollDel = fs.readFileSync(scrollDelPath, "utf8");
-              if (!scrollDel.includes("UIGestureRecognizerDelegate")) {
-                scrollDel = scrollDel.replace(
-                  "class PagerScrollDelegate: NSObject, UIScrollViewDelegate, UICollectionViewDelegate {",
-                  "class PagerScrollDelegate: NSObject, UIScrollViewDelegate, UICollectionViewDelegate, UIGestureRecognizerDelegate {\n  weak var originalGestureDelegate: UIGestureRecognizerDelegate?"
-                );
-                scrollDel = scrollDel.replace(
-                  "func scrollViewDidScroll(_ scrollView: UIScrollView) {",
-                  [
-                    "func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {",
-                    "    var v: UIView? = touch.view",
-                    "    while let view = v {",
-                    "      if view.accessibilityIdentifier == \"player-slider\" {",
-                    "        return false",
-                    "      }",
-                    "      v = view.superview",
-                    "    }",
-                    "    return originalGestureDelegate?.gestureRecognizer?(gestureRecognizer, shouldReceive: touch) ?? true",
-                    "  }",
-                    "",
-                    "  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {",
-                    "    return originalGestureDelegate?.gestureRecognizer?(gestureRecognizer, shouldRecognizeSimultaneouslyWith: otherGestureRecognizer) ?? false",
-                    "  }",
-                    "",
-                    "  func scrollViewDidScroll(_ scrollView: UIScrollView) {"
-                  ].join("\n")
-                );
-                fs.writeFileSync(scrollDelPath, scrollDel, "utf8");
-              }
-            }
             const pagerViewSwiftPath = path.join(pagerIosDir, "PagerView.swift");
             if (fs.existsSync(pagerViewSwiftPath)) {
               let pagerViewSwift = fs.readFileSync(pagerViewSwiftPath, "utf8");
-              if (!pagerViewSwift.includes("collectionView.panGestureRecognizer.delegate = scrollDelegate")) {
+              if (!pagerViewSwift.includes("collectionView.delaysContentTouches = false")) {
                 pagerViewSwift = pagerViewSwift.replace(
-                  "if scrollDelegate.originalDelegate == nil {",
-                  [
-                    "if scrollDelegate.originalDelegate == nil {",
-                    "          scrollDelegate.originalGestureDelegate = collectionView.panGestureRecognizer.delegate",
-                    "          collectionView.panGestureRecognizer.delegate = scrollDelegate"
-                  ].join("\n")
+                  "collectionView.showsHorizontalScrollIndicator = false",
+                  "collectionView.showsHorizontalScrollIndicator = false\n        collectionView.delaysContentTouches = false"
                 );
                 fs.writeFileSync(pagerViewSwiftPath, pagerViewSwift, "utf8");
-                console.log("✅ 已成功为 react-native-pager-view 注入进度条独占触控过滤");
+                console.log("✅ 已在 PagerView.swift 中设置 delaysContentTouches = false 优化触控响应");
               }
             }
           } catch (e) {
             console.warn("⚠️ react-native-pager-view 修补警告:", e.message);
           }
 
-          // 24. 彻底消除二级界面返回一级界面对应的侧边白边（为底层 UIWindow、rootView、RNSScreenStack 与 Tabs 补齐原生深浅色动态底色）：
+          // 24. 彻底消除二级界面返回一级界面对应的侧边白边（为底层 UIWindow、rootView、RNSScreenStack、RNSScreen、RNSScreenStackAnimator、RCTTabViewComponentView 与 Tabs 补齐原生深浅色动态底色）：
+          // (1) react-native-screens: RNSScreenStack.mm, RNSScreen.mm, RNSScreenStackAnimator.mm
           try {
             const rnsPkgPath = require.resolve("react-native-screens/package.json", { paths: ["apps/mobile"] });
-            const rnsStackMm = path.join(path.dirname(rnsPkgPath), "ios", "RNSScreenStack.mm");
+            const rnsDir = path.join(path.dirname(rnsPkgPath), "ios");
+            const rnsStackMm = path.join(rnsDir, "RNSScreenStack.mm");
             if (fs.existsSync(rnsStackMm)) {
               let stackMm = fs.readFileSync(rnsStackMm, "utf8");
               if (!stackMm.includes("colorWithDynamicProvider")) {
@@ -2657,23 +2703,157 @@ jobs:
                     "  self.backgroundColor = defaultDynamicBg;"
                   ].join("\n")
                 );
-                fs.writeFileSync(rnsStackMm, stackMm, "utf8");
-                console.log("✅ 已为 RNSScreenStack.mm 补齐原生深浅色动态底色，消除左滑白边");
+              }
+              if (!stackMm.includes("_nativeContainerBackgroundColor = bg ?: defaultDynamicBg;")) {
+                stackMm = stackMm.replace(
+                  "_nativeContainerBackgroundColor = RCTUIColorFromSharedColor(newScreenProps.nativeContainerBackgroundColor);",
+                  [
+                    "UIColor *bg = RCTUIColorFromSharedColor(newScreenProps.nativeContainerBackgroundColor);",
+                    "    UIColor *defaultDynamicBg = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {",
+                    "      return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithRed:0x14/255.0 green:0x12/255.0 blue:0x18/255.0 alpha:1.0] : [UIColor colorWithRed:0xFE/255.0 green:0xF7/255.0 blue:0xFF/255.0 alpha:1.0];",
+                    "    }];",
+                    "    _nativeContainerBackgroundColor = bg ?: defaultDynamicBg;",
+                    "    self.backgroundColor = _nativeContainerBackgroundColor;"
+                  ].join("\n")
+                );
+              }
+              if (!stackMm.includes("- (void)viewWillAppear:(BOOL)animated\n{\n  [super viewWillAppear:animated];\n  if (self.view.backgroundColor == nil")) {
+                stackMm = stackMm.replace(
+                  "@implementation RNSNavigationController",
+                  [
+                    "@implementation RNSNavigationController",
+                    "",
+                    "- (void)viewWillAppear:(BOOL)animated",
+                    "{",
+                    "  [super viewWillAppear:animated];",
+                    "  if (self.view.backgroundColor == nil || CGColorGetAlpha(self.view.backgroundColor.CGColor) == 0.0) {",
+                    "    self.view.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {",
+                    "      return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithRed:0x14/255.0 green:0x12/255.0 blue:0x18/255.0 alpha:1.0] : [UIColor colorWithRed:0xFE/255.0 green:0xF7/255.0 blue:0xFF/255.0 alpha:1.0];",
+                    "    }];",
+                    "  }",
+                    "}"
+                  ].join("\n")
+                );
+              }
+              fs.writeFileSync(rnsStackMm, stackMm, "utf8");
+              console.log("✅ 已为 RNSScreenStack.mm 补齐原生深浅色动态底色，消除侧滑白边");
+            }
+
+            const rnsScreenMm = path.join(rnsDir, "RNSScreen.mm");
+            if (fs.existsSync(rnsScreenMm)) {
+              let screenMm = fs.readFileSync(rnsScreenMm, "utf8");
+              if (!screenMm.includes("defaultDynamicBg")) {
+                screenMm = screenMm.replace(
+                  "[self initCommonProps];",
+                  "[self initCommonProps];\n    UIColor *defaultDynamicBg = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {\n      return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithRed:0x14/255.0 green:0x12/255.0 blue:0x18/255.0 alpha:1.0] : [UIColor colorWithRed:0xFE/255.0 green:0xF7/255.0 blue:0xFF/255.0 alpha:1.0];\n    }];\n    self.backgroundColor = defaultDynamicBg;"
+                  );
+                screenMm = screenMm.replace(
+                  "self.view = view;",
+                  "self.view = view;\n    UIColor *defaultDynamicBg = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {\n      return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithRed:0x14/255.0 green:0x12/255.0 blue:0x18/255.0 alpha:1.0] : [UIColor colorWithRed:0xFE/255.0 green:0xFF/255.0 blue:0xFF/255.0 alpha:1.0];\n    }];\n    self.view.backgroundColor = defaultDynamicBg;"
+                );
+                fs.writeFileSync(rnsScreenMm, screenMm, "utf8");
+                console.log("✅ 已为 RNSScreen.mm 补齐 screenView 与 screenController 动态底色");
+              }
+            }
+
+            const rnsAnimatorMm = path.join(rnsDir, "RNSScreenStackAnimator.mm");
+            if (fs.existsSync(rnsAnimatorMm)) {
+              let animMm = fs.readFileSync(rnsAnimatorMm, "utf8");
+              if (!animMm.includes("defaultDynamicBg")) {
+                animMm = animMm.replace(
+                  "toViewController.view.frame = [transitionContext finalFrameForViewController:toViewController];",
+                  "toViewController.view.frame = [transitionContext finalFrameForViewController:toViewController];\n  UIColor *defaultDynamicBg = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {\n    return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithRed:0x14/255.0 green:0x12/255.0 blue:0x18/255.0 alpha:1.0] : [UIColor colorWithRed:0xFE/255.0 green:0xF7/255.0 blue:0xFF/255.0 alpha:1.0];\n  }];\n  transitionContext.containerView.backgroundColor = defaultDynamicBg;"
+                );
+                fs.writeFileSync(rnsAnimatorMm, animMm, "utf8");
+                console.log("✅ 已为 RNSScreenStackAnimator.mm 补齐 containerView 转场动态底色");
               }
             }
           } catch (e) {
-            console.warn("⚠️ react-native-screens RNSScreenStack 修补警告:", e.message);
+            console.warn("⚠️ react-native-screens 原生修补警告:", e.message);
           }
+
+          // (2) react-native-bottom-tabs: RCTTabViewComponentView.mm, TabViewProvider.swift, TabViewImpl.swift
+          try {
+            const rctTabMm = "packages/react-native-bottom-tabs/ios/RCTTabViewComponentView.mm";
+            if (fs.existsSync(rctTabMm)) {
+              let tabMm = fs.readFileSync(rctTabMm, "utf8");
+              if (!tabMm.includes("defaultDynamicBg")) {
+                tabMm = tabMm.replace(
+                  "self.contentView = _tabViewProvider;",
+                  "self.contentView = _tabViewProvider;\n    UIColor *defaultDynamicBg = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {\n      return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithRed:0x14/255.0 green:0x12/255.0 blue:0x18/255.0 alpha:1.0] : [UIColor colorWithRed:0xFE/255.0 green:0xF7/255.0 blue:0xFF/255.0 alpha:1.0];\n    }];\n    self.backgroundColor = defaultDynamicBg;\n    _tabViewProvider.backgroundColor = defaultDynamicBg;"
+                );
+                fs.writeFileSync(rctTabMm, tabMm, "utf8");
+                console.log("✅ 已为 RCTTabViewComponentView.mm 补齐原生动态底色");
+              }
+            }
+
+            const tabProviderSwift = "packages/react-native-bottom-tabs/ios/TabViewProvider.swift";
+            if (fs.existsSync(tabProviderSwift)) {
+              let provSwift = fs.readFileSync(tabProviderSwift, "utf8");
+              if (!provSwift.includes("defaultDynamicBg")) {
+                provSwift = provSwift.replace(
+                  "hostingController.view.backgroundColor = .clear",
+                  "let defaultDynamicBg = UIColor { traits in traits.userInterfaceStyle == .dark ? UIColor(red: 0x14/255.0, green: 0x12/255.0, blue: 0x18/255.0, alpha: 1.0) : UIColor(red: 0xFE/255.0, green: 0xFF/255.0, blue: 0xFF/255.0, alpha: 1.0) }\n      hostingController.view.backgroundColor = defaultDynamicBg\n      self.backgroundColor = defaultDynamicBg"
+                );
+                fs.writeFileSync(tabProviderSwift, provSwift, "utf8");
+                console.log("✅ 已为 TabViewProvider.swift 补齐 HostingController 与 view 动态底色");
+              }
+            }
+
+            const tabImplSwift = "packages/react-native-bottom-tabs/ios/TabViewImpl.swift";
+            if (fs.existsSync(tabImplSwift)) {
+              let implSwift = fs.readFileSync(tabImplSwift, "utf8");
+              if (!implSwift.includes("defaultDynamicBg")) {
+                implSwift = implSwift.replace(
+                  "tabController.view.backgroundColor = .clear\n            tabController.viewControllers?.forEach { $0.view.backgroundColor = .clear }",
+                  "let defaultDynamicBg = UIColor { traits in traits.userInterfaceStyle == .dark ? UIColor(red: 0x14/255.0, green: 0x12/255.0, blue: 0x18/255.0, alpha: 1.0) : UIColor(red: 0xFE/255.0, green: 0xFF/255.0, blue: 0xFF/255.0, alpha: 1.0) }\n            tabController.view.backgroundColor = defaultDynamicBg\n            tabController.viewControllers?.forEach { $0.view.backgroundColor = defaultDynamicBg }"
+                );
+                fs.writeFileSync(tabImplSwift, implSwift, "utf8");
+                console.log("✅ 已为 TabViewImpl.swift 补齐 tabController 动态底色");
+              }
+            }
+          } catch (e) {
+            console.warn("⚠️ react-native-bottom-tabs 原生修补警告:", e.message);
+          }
+
+          // (3) ExpoAppSceneDelegate.swift
+          try {
+            const expoPkg = require.resolve("expo/package.json", { paths: ["apps/mobile"] });
+            const sceneDelSwift = path.join(path.dirname(expoPkg), "ios", "AppDelegates", "ExpoAppSceneDelegate.swift");
+            if (fs.existsSync(sceneDelSwift)) {
+              let sceneCode = fs.readFileSync(sceneDelSwift, "utf8");
+              if (!sceneCode.includes("defaultDynamicBg")) {
+                sceneCode = sceneCode.replace(
+                  "self.window = window",
+                  "self.window = window\n    let defaultDynamicBg = UIColor { traits in traits.userInterfaceStyle == .dark ? UIColor(red: 0x14/255.0, green: 0x12/255.0, blue: 0x18/255.0, alpha: 1.0) : UIColor(red: 0xFE/255.0, green: 0xFF/255.0, blue: 0xFF/255.0, alpha: 1.0) }\n    window.backgroundColor = defaultDynamicBg"
+                );
+                sceneCode = sceneCode.replace(
+                  "provider.window = window",
+                  "provider.window = window\n    window.rootViewController?.view.backgroundColor = defaultDynamicBg"
+                );
+                fs.writeFileSync(sceneDelSwift, sceneCode, "utf8");
+                console.log("✅ 已为 ExpoAppSceneDelegate.swift 补齐 UIWindow 与 rootViewController 动态底色");
+              }
+            }
+          } catch (e) {
+            console.warn("⚠️ ExpoAppSceneDelegate 修补警告:", e.message);
+          }
+
+          // (4) Tabs layout: sceneStyle + style
           const tabsLayoutPath = "apps/mobile/src/app/(tabs)/_layout.tsx";
           if (fs.existsSync(tabsLayoutPath)) {
             let tabsLayout = fs.readFileSync(tabsLayoutPath, "utf8");
-            if (!tabsLayout.includes("sceneContainerStyle={{ backgroundColor: themes.background }}")) {
+            if (!tabsLayout.includes("sceneStyle: { backgroundColor: themes.background }")) {
               tabsLayout = tabsLayout.replace(
                 "<Tabs\n\t\t\tdisablePageAnimations",
-                "<Tabs\n\t\t\tsceneContainerStyle={{ backgroundColor: themes.background }}\n\t\t\tdisablePageAnimations"
+                "<Tabs\n\t\t\tscreenOptions={{\n\t\t\t\tsceneStyle: { backgroundColor: themes.background },\n\t\t\t}}\n\t\t\tstyle={{ backgroundColor: themes.background }}\n\t\t\tdisablePageAnimations"
+              );
+              tabsLayout = tabsLayout.replace(
+                "<Tabs\n\t\t\tsceneContainerStyle={{ backgroundColor: themes.background }}\n\t\t\tdisablePageAnimations",
+                "<Tabs\n\t\t\tscreenOptions={{\n\t\t\t\tsceneStyle: { backgroundColor: themes.background },\n\t\t\t}}\n\t\t\tstyle={{ backgroundColor: themes.background }}\n\t\t\tdisablePageAnimations"
               );
               fs.writeFileSync(tabsLayoutPath, tabsLayout, "utf8");
-              console.log("✅ 已在 (tabs)/_layout.tsx 中为 Tabs 补齐 sceneContainerStyle 背景色");
+              console.log("✅ 已在 (tabs)/_layout.tsx 中为 Tabs 补齐 screenOptions.sceneStyle 与 style 背景色");
             }
           }
 
@@ -3242,6 +3422,319 @@ jobs:
             dlPageCode = dlPageCode.replace(oldHandleExport, newHandleExport);
             fs.writeFileSync(downloadedPath, dlPageCode, "utf8");
             console.log("✅ 已在 downloaded.tsx 中实现 iOS 单曲与批量导出音频");
+          }
+
+          // 28. 修复音乐播放界面点击下载无响应、下载队列为空的问题：
+          const orpheusDmPath = "packages/orpheus/ios/OrpheusDownloadManager.swift";
+          if (fs.existsSync(orpheusDmPath)) {
+            let dmCode = fs.readFileSync(orpheusDmPath, "utf8");
+            if (dmCode.includes("func downloadTrack(track: Track)") && !dmCode.includes("fetchAndStartBilibiliDownload")) {
+              const oldDmBlock = [
+                "    func downloadTrack(track: Track) {",
+                "        // Resolve URL if needed (Bilibili logic)",
+                "        let urlString = track.url",
+                "        if urlString.starts(with: \"orpheus://bilibili\") {",
+                "            resolveAndDownload(track: track)",
+                "        } else {",
+                "            startDownload(url: urlString, track: track)",
+                "        }",
+                "    }",
+                "",
+                "    func resumeDownload(id: String) {",
+                "        guard let track = stateQueue.sync(execute: { trackMap[id] }) else { return }",
+                "        downloadTrack(track: track)",
+                "    }",
+                "    ",
+                "    private func resolveAndDownload(track: Track) {",
+                "        guard let uri = URL(string: track.url),",
+                "              let components = URLComponents(url: uri, resolvingAgainstBaseURL: false) else { return }",
+                "        ",
+                "        let bvid = components.queryItems?.first(where: { $0.name == \"bvid\" })?.value",
+                "        let cid = components.queryItems?.first(where: { $0.name == \"cid\" })?.value",
+                "        ",
+                "        guard let bvid = bvid, let cid = cid else { return }",
+                "        ",
+                "        BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid) { [weak self] result in",
+                "            DispatchQueue.main.async {",
+                "                switch result {",
+                "                case .success(let realUrl):",
+                "                    self?.startDownload(url: realUrl, track: track)",
+                "                case .failure(let error):",
+                "                    // No ID available if we failed before starting? Actually track.id is there.",
+                "                    self?.notifyUpdate(id: track.id, state: .failed, track: track)",
+                "                }",
+                "            }",
+                "        }",
+                "    }",
+                "    ",
+                "    private func notifyUpdate(id: String, state: DownloadState, track: Track?) {",
+                "        let task = DownloadTask()",
+                "        task.id = id",
+                "        task.state = state",
+                "        task.track = track",
+                "        ",
+                "        if state == .completed {",
+                "            task.percentDownloaded = 1.0",
+                "        }",
+                "        ",
+                "        onDownloadUpdated?(task)",
+                "    }",
+                "    ",
+                "    private func startDownload(url: String, track: Track) {",
+                "        guard let nsUrl = URL(string: url) else { return }",
+                "        ",
+                "        stateQueue.sync {",
+                "            var request = URLRequest(url: nsUrl)",
+                "            if url.contains(\"bilivideo.com\") {",
+                "                 request.setValue(\"https://www.bilibili.com/\", forHTTPHeaderField: \"Referer\")",
+                "                 request.setValue(\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\", forHTTPHeaderField: \"User-Agent\")",
+                "            }",
+                "            ",
+                "            let task = urlSession.downloadTask(with: request)",
+                "            task.taskDescription = track.id",
+                "            ",
+                "            trackMap[track.id] = track",
+                "            activeTasks[track.id] = task",
+                "            downloadTasks[track.id] = .downloading",
+                "            ",
+                "            task.resume()",
+                "            ",
+                "            saveTasksLocked()",
+                "        }",
+                "        ",
+                "        notifyUpdate(id: track.id, state: .downloading, track: track)",
+                "    }"
+              ].join("\n");
+
+              const newDmBlock = [
+                "    func downloadTrack(track: Track) {",
+                "        // Pre-register task state in memory and storage so it appears immediately",
+                "        stateQueue.sync {",
+                "            trackMap[track.id] = track",
+                "            downloadTasks[track.id] = .downloading",
+                "            saveTasksLocked()",
+                "        }",
+                "        notifyUpdate(id: track.id, state: .downloading, track: track)",
+                "        ",
+                "        let urlString = track.url",
+                "        if urlString.starts(with: \"orpheus://bilibili\") {",
+                "            resolveAndDownload(track: track)",
+                "        } else {",
+                "            startDownload(url: urlString, track: track)",
+                "        }",
+                "    }",
+
+                "    func resumeDownload(id: String) {",
+                "        guard let track = stateQueue.sync(execute: { trackMap[id] }) else { return }",
+                "        downloadTrack(track: track)",
+                "    }",
+                "    ",
+                "    private func resolveAndDownload(track: Track) {",
+                "        guard let uri = URL(string: track.url),",
+                "              let components = URLComponents(url: uri, resolvingAgainstBaseURL: false) else {",
+                "            markTaskFailed(track: track)",
+                "            return",
+                "        }",
+                "        ",
+                "        guard let bvid = components.queryItems?.first(where: { $0.name == \"bvid\" })?.value else {",
+                "            markTaskFailed(track: track)",
+                "            return",
+                "        }",
+                "        ",
+                "        let cid = components.queryItems?.first(where: { $0.name == \"cid\" })?.value",
+                "        ",
+                "        if let cid = cid {",
+                "            fetchAndStartBilibiliDownload(bvid: bvid, cid: cid, track: track)",
+                "        } else {",
+                "            BilibiliApi.shared.getPageList(bvid: bvid) { [weak self] result in",
+                "                DispatchQueue.main.async {",
+                "                    switch result {",
+                "                    case .success(let cidInt):",
+                "                        self?.fetchAndStartBilibiliDownload(bvid: bvid, cid: String(cidInt), track: track)",
+                "                    case .failure(let error):",
+                "                        print(\"[OrpheusDownloadManager] getPageList failed: \\(error)\")",
+                "                        self?.markTaskFailed(track: track)",
+                "                    }",
+                "                }",
+                "            }",
+                "        }",
+                "    }",
+                "    ",
+                "    private func fetchAndStartBilibiliDownload(bvid: String, cid: String, track: Track) {",
+                "        BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid) { [weak self] result in",
+                "            DispatchQueue.main.async {",
+                "                switch result {",
+                "                case .success(let realUrl):",
+                "                    self?.startDownload(url: realUrl, track: track)",
+                "                case .failure(let error):",
+                "                    print(\"[OrpheusDownloadManager] getPlayUrl failed: \\(error)\")",
+                "                    self?.markTaskFailed(track: track)",
+                "                }",
+                "            }",
+                "        }",
+                "    }",
+
+                "    private func markTaskFailed(track: Track) {",
+                "        stateQueue.sync {",
+                "            downloadTasks[track.id] = .failed",
+                "            activeTasks.removeValue(forKey: track.id)",
+                "            saveTasksLocked()",
+                "        }",
+                "        notifyUpdate(id: track.id, state: .failed, track: track)",
+                "    }",
+                "    ",
+                "    private func notifyUpdate(id: String, state: DownloadState, track: Track?) {",
+                "        let task = DownloadTask()",
+                "        task.id = id",
+                "        task.state = state",
+                "        task.track = track",
+                "        ",
+                "        if state == .completed {",
+                "            task.percentDownloaded = 1.0",
+                "        }",
+                "        ",
+                "        onDownloadUpdated?(task)",
+                "    }",
+                "    ",
+                "    private func startDownload(url: String, track: Track) {",
+                "        guard let nsUrl = URL(string: url) else {",
+                "            markTaskFailed(track: track)",
+                "            return",
+                "        }",
+                "        ",
+                "        stateQueue.sync {",
+                "            if let existing = activeTasks[track.id] {",
+                "                existing.cancel()",
+                "            }",
+                "            ",
+                "            var request = URLRequest(url: nsUrl)",
+                "            if url.contains(\"bilivideo.com\") {",
+                "                 request.setValue(\"https://www.bilibili.com/\", forHTTPHeaderField: \"Referer\")",
+                "                 request.setValue(\"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\", forHTTPHeaderField: \"User-Agent\")",
+                "            }",
+                "            ",
+                "            let task = urlSession.downloadTask(with: request)",
+                "            task.taskDescription = track.id",
+                "            ",
+                "            trackMap[track.id] = track",
+                "            activeTasks[track.id] = task",
+                "            downloadTasks[track.id] = .downloading",
+                "            ",
+                "            task.resume()",
+                "            ",
+                "            saveTasksLocked()",
+                "        }",
+                "        ",
+                "        notifyUpdate(id: track.id, state: .downloading, track: track)",
+                "    }"
+              ].join("\n");
+
+              dmCode = dmCode.replace(oldDmBlock, newDmBlock);
+              fs.writeFileSync(orpheusDmPath, dmCode, "utf8");
+              console.log("✅ 已在 OrpheusDownloadManager.swift 中修复下载前即时注册任务与缺失 cid 时的自动解析");
+            }
+          }
+
+          // 29. 修复 utils/player.ts 中 getInternalPlayUri 只要存在 cid 即附带 cid 参数：
+          const playerUtilFixPath = "apps/mobile/src/utils/player.ts";
+          if (fs.existsSync(playerUtilFixPath)) {
+            let pCode = fs.readFileSync(playerUtilFixPath, "utf8");
+            const oldUriPattern = /function getInternalPlayUri\(track: Track\) \{[\s\S]*?return undefined[\r\n\s]*\}/;
+            if (oldUriPattern.test(pCode) && !pCode.includes("const { bvid, cid } = track.bilibiliMetadata")) {
+              const newUriBlock = [
+                "function getInternalPlayUri(track: Track) {",
+                "  if (track.source === 'bilibili') {",
+                "    const { bvid, cid } = track.bilibiliMetadata",
+                "    return cid",
+                "      ? `orpheus://bilibili?bvid=${bvid}&cid=${cid}&hires=0&dolby=0`",
+                "      : `orpheus://bilibili?bvid=${bvid}&hires=0&dolby=0`",
+                "  }",
+                "  if (track.source === 'local' && track.localMetadata) {",
+                "    return track.localMetadata.localPath",
+                "  }",
+                "  return undefined",
+                "}"
+              ].join("\n");
+              pCode = pCode.replace(oldUriPattern, newUriBlock);
+              fs.writeFileSync(playerUtilFixPath, pCode, "utf8");
+              console.log("✅ 已在 utils/player.ts 中支持存在 cid 时自动附加播放参数");
+            }
+          }
+
+          // 30. 修复 PlayerMenuContent.tsx 与 useLocalPlaylistMenu.ts 下载触发后即时刷新下载状态：
+          const menuContentPath = "apps/mobile/src/features/player/components/menu/PlayerMenuContent.tsx";
+          if (fs.existsSync(menuContentPath)) {
+            let mCode = fs.readFileSync(menuContentPath, "utf8");
+            if (!mCode.includes("orpheusQueryKeys.downloadTasks()")) {
+              mCode = mCode.replace(
+                "import { useBatchDownloadStatus } from '@/hooks/queries/orpheus'",
+                "import { orpheusQueryKeys, useBatchDownloadStatus } from '@/hooks/queries/orpheus'\nimport { queryClient } from '@/lib/config/queryClient'"
+              );
+              const oldDownloadHandler = /await Orpheus\.downloadTrack\(\{[\s\S]*?\}\)[\s\S]*?toast\.success\('已添加到下载队列'\)/;
+              if (oldDownloadHandler.test(mCode)) {
+                mCode = mCode.replace(
+                  oldDownloadHandler,
+                  [
+                    "await Orpheus.downloadTrack({",
+                    "        id: currentTrack.uniqueKey,",
+                    "        url: url,",
+                    "        title: currentTrack.title,",
+                    "        artist: artistName,",
+                    "        artwork: artworkUrl,",
+                    "        duration: currentTrack.duration,",
+                    "      })",
+                    "      void queryClient.invalidateQueries({",
+                    "        queryKey: orpheusQueryKeys.downloadTasks(),",
+                    "      })",
+                    "      if (trackId) {",
+                    "        void queryClient.invalidateQueries({",
+                    "          queryKey: orpheusQueryKeys.batchDownloadStatus([trackId]),",
+                    "        })",
+                    "      }",
+                    "      toast.success('已添加到下载队列')"
+                  ].join("\n")
+                );
+              }
+              mCode = mCode.replace("}, [currentTrack])", "}, [currentTrack, trackId])");
+              fs.writeFileSync(menuContentPath, mCode, "utf8");
+              console.log("✅ 已在 PlayerMenuContent.tsx 中加入下载队列即时刷新与状态同步");
+            }
+          }
+
+          const localMenuPath = "apps/mobile/src/features/playlist/local/hooks/useLocalPlaylistMenu.ts";
+          if (fs.existsSync(localMenuPath)) {
+            let lmCode = fs.readFileSync(localMenuPath, "utf8");
+            if (!lmCode.includes("orpheusQueryKeys.downloadTasks()")) {
+              lmCode = lmCode.replace(
+                "import { queryClient } from '@/lib/config/queryClient'",
+                "import { orpheusQueryKeys } from '@/hooks/queries/orpheus'\nimport { queryClient } from '@/lib/config/queryClient'"
+              );
+              const oldLmHandler = /await Orpheus\.downloadTrack\(\{[\s\S]*?\}\)[\s\S]*?toast\.success\('已开始下载'\)/;
+              if (oldLmHandler.test(lmCode)) {
+                lmCode = lmCode.replace(
+                  oldLmHandler,
+                  [
+                    "await Orpheus.downloadTrack({",
+                    "                id: item.uniqueKey,",
+                    "                url: url,",
+                    "                title: item.title,",
+                    "                artist: artistName,",
+                    "                artwork: artwork,",
+                    "                duration: item.duration,",
+                    "              })",
+                    "              void queryClient.invalidateQueries({",
+                    "                queryKey: orpheusQueryKeys.downloadTasks(),",
+                    "              })",
+                    "              void queryClient.invalidateQueries({",
+                    "                queryKey: orpheusQueryKeys.batchDownloadStatus([item.uniqueKey]),",
+                    "              })",
+                    "              toast.success('已开始下载')"
+                  ].join("\n")
+                );
+              }
+              fs.writeFileSync(localMenuPath, lmCode, "utf8");
+              console.log("✅ 已在 useLocalPlaylistMenu.ts 中加入下载队列即时刷新与状态同步");
+            }
           }
 
           EOF
