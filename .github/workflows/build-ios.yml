@@ -363,7 +363,7 @@ jobs:
                 "      infoPlist: {",
                 "        UIAppFonts: ['MaterialDesignIcons.ttf'],",
                 "        ExpoShareIntoAppGroupId: 'group.com.roitium.bbplayer',",
-                "        UIBackgroundModes: ['audio'],",
+                "        UIBackgroundModes: ['audio'],\n        NSSupportsLiveActivities: true,\n        NSSupportsLiveActivitiesFrequentUpdates: true,",
                 "      },",
                 "      bundleIdentifier:"
               ].join("\n");
@@ -519,6 +519,7 @@ jobs:
                 "  return createElement(",
                 "    View,",
                 "    {",
+                '      testID: "player-slider",',
                 "      style: [iosSliderStyles.container, style],",
                 "      onLayout: handleLayout,",
                 "      hitSlop: { top: 15, bottom: 15, left: 10, right: 10 },",
@@ -2371,6 +2372,195 @@ jobs:
               );
               fs.writeFileSync(providersPath, providersCode, "utf8");
               console.log("✅ 已在 providers.tsx 中为根容器补齐主题背景色");
+            }
+          }
+
+                    // 23. 修复音乐播放界面进度条拖拽与滑动切换歌词手势冲突（仅在进度条区域屏蔽 PagerView 滑动手势）：
+          const playerSliderPath = "apps/mobile/src/features/player/components/main/PlayerSlider.tsx";
+          if (fs.existsSync(playerSliderPath)) {
+            let playerSlider = fs.readFileSync(playerSliderPath, "utf8");
+            if (!playerSlider.includes('testID="player-slider"')) {
+              playerSlider = playerSlider.replace(
+                "<View style={podcast ? styles.podcastSliderRow : undefined}>",
+                '<View testID="player-slider" style={podcast ? styles.podcastSliderRow : undefined}>'
+              );
+              fs.writeFileSync(playerSliderPath, playerSlider, "utf8");
+              console.log("✅ 已在 PlayerSlider.tsx 中为进度条添加 player-slider 标识以屏蔽歌词手势冲突");
+            }
+          }
+          try {
+            const pagerPkgPath = require.resolve("react-native-pager-view/package.json", { paths: ["apps/mobile"] });
+            const pagerIosDir = path.join(path.dirname(pagerPkgPath), "ios");
+            const scrollDelPath = path.join(pagerIosDir, "PagerScrollDelegate.swift");
+            if (fs.existsSync(scrollDelPath)) {
+              let scrollDel = fs.readFileSync(scrollDelPath, "utf8");
+              if (!scrollDel.includes("UIGestureRecognizerDelegate")) {
+                scrollDel = scrollDel.replace(
+                  "class PagerScrollDelegate: NSObject, UIScrollViewDelegate, UICollectionViewDelegate {",
+                  "class PagerScrollDelegate: NSObject, UIScrollViewDelegate, UICollectionViewDelegate, UIGestureRecognizerDelegate {\n  weak var originalGestureDelegate: UIGestureRecognizerDelegate?"
+                );
+                scrollDel = scrollDel.replace(
+                  "func scrollViewDidScroll(_ scrollView: UIScrollView) {",
+                  [
+                    "func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {",
+                    "    var v: UIView? = touch.view",
+                    "    while let view = v {",
+                    "      if view.accessibilityIdentifier == \"player-slider\" {",
+                    "        return false",
+                    "      }",
+                    "      v = view.superview",
+                    "    }",
+                    "    return originalGestureDelegate?.gestureRecognizer?(gestureRecognizer, shouldReceive: touch) ?? true",
+                    "  }",
+                    "",
+                    "  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {",
+                    "    return originalGestureDelegate?.gestureRecognizer?(gestureRecognizer, shouldRecognizeSimultaneouslyWith: otherGestureRecognizer) ?? false",
+                    "  }",
+                    "",
+                    "  func scrollViewDidScroll(_ scrollView: UIScrollView) {"
+                  ].join("\n")
+                );
+                fs.writeFileSync(scrollDelPath, scrollDel, "utf8");
+              }
+            }
+            const pagerViewSwiftPath = path.join(pagerIosDir, "PagerView.swift");
+            if (fs.existsSync(pagerViewSwiftPath)) {
+              let pagerViewSwift = fs.readFileSync(pagerViewSwiftPath, "utf8");
+              if (!pagerViewSwift.includes("collectionView.panGestureRecognizer.delegate = scrollDelegate")) {
+                pagerViewSwift = pagerViewSwift.replace(
+                  "if scrollDelegate.originalDelegate == nil {",
+                  [
+                    "if scrollDelegate.originalDelegate == nil {",
+                    "          scrollDelegate.originalGestureDelegate = collectionView.panGestureRecognizer.delegate",
+                    "          collectionView.panGestureRecognizer.delegate = scrollDelegate"
+                  ].join("\n")
+                );
+                fs.writeFileSync(pagerViewSwiftPath, pagerViewSwift, "utf8");
+                console.log("✅ 已成功为 react-native-pager-view 注入进度条独占触控过滤");
+              }
+            }
+          } catch (e) {
+            console.warn("⚠️ react-native-pager-view 修补警告:", e.message);
+          }
+
+          // 24. 彻底消除二级界面返回一级界面对应的侧边白边（为底层 UIWindow、rootView、RNSScreenStack 与 Tabs 补齐原生深浅色动态底色）：
+          try {
+            const rnsPkgPath = require.resolve("react-native-screens/package.json", { paths: ["apps/mobile"] });
+            const rnsStackMm = path.join(path.dirname(rnsPkgPath), "ios", "RNSScreenStack.mm");
+            if (fs.existsSync(rnsStackMm)) {
+              let stackMm = fs.readFileSync(rnsStackMm, "utf8");
+              if (!stackMm.includes("colorWithDynamicProvider")) {
+                stackMm = stackMm.replace(
+                  "_nativeContainerBackgroundColor = nil;",
+                  [
+                    "UIColor *defaultDynamicBg = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {",
+                    "    return traits.userInterfaceStyle == UIUserInterfaceStyleDark ? [UIColor colorWithRed:0x14/255.0 green:0x12/255.0 blue:0x18/255.0 alpha:1.0] : [UIColor colorWithRed:0xFE/255.0 green:0xF7/255.0 blue:0xFF/255.0 alpha:1.0];",
+                    "  }];",
+                    "  _nativeContainerBackgroundColor = defaultDynamicBg;",
+                    "  _controller.view.backgroundColor = defaultDynamicBg;",
+                    "  self.backgroundColor = defaultDynamicBg;"
+                  ].join("\n")
+                );
+                fs.writeFileSync(rnsStackMm, stackMm, "utf8");
+                console.log("✅ 已为 RNSScreenStack.mm 补齐原生深浅色动态底色，消除左滑白边");
+              }
+            }
+          } catch (e) {
+            console.warn("⚠️ react-native-screens RNSScreenStack 修补警告:", e.message);
+          }
+          const tabsLayoutPath = "apps/mobile/src/app/(tabs)/_layout.tsx";
+          if (fs.existsSync(tabsLayoutPath)) {
+            let tabsLayout = fs.readFileSync(tabsLayoutPath, "utf8");
+            if (!tabsLayout.includes("sceneContainerStyle={{ backgroundColor: themes.background }}")) {
+              tabsLayout = tabsLayout.replace(
+                "<Tabs\n\t\t\tdisablePageAnimations",
+                "<Tabs\n\t\t\tsceneContainerStyle={{ backgroundColor: themes.background }}\n\t\t\tdisablePageAnimations"
+              );
+              fs.writeFileSync(tabsLayoutPath, tabsLayout, "utf8");
+              console.log("✅ 已在 (tabs)/_layout.tsx 中为 Tabs 补齐 sceneContainerStyle 背景色");
+            }
+          }
+
+          // 25. 增强 Now Playing 元数据与保底封面，确保退出主界面时触发系统原生灵动岛飞入与融合动画：
+          const orpheusManagerPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
+          if (fs.existsSync(orpheusManagerPath)) {
+            let orpheusManager = fs.readFileSync(orpheusManagerPath, "utf8");
+            if (!orpheusManager.includes("MPNowPlayingInfoPropertyIsLiveStream: false")) {
+              orpheusManager = orpheusManager.replace(
+                "let isPlayingState = player.timeControlStatus == .playing\n        let playbackRate = isPlayingState ? Double(player.rate) : 0.0",
+                "let isPlayingState = player.timeControlStatus == .playing || player.timeControlStatus == .waitingToPlayAtSpecifiedRate || player.rate > 0\n        let playbackRate = isPlayingState ? (player.rate > 0 ? Double(player.rate) : 1.0) : 0.0"
+              );
+              orpheusManager = orpheusManager.replace(
+                'MPMediaItemPropertyTitle: track.title ?? "Unknown Title",',
+                'MPMediaItemPropertyMediaType: MPMediaType.music.rawValue,\n            MPNowPlayingInfoPropertyMediaType: 1,\n            MPMediaItemPropertyTitle: track.title ?? "Unknown Title",'
+              );
+              orpheusManager = orpheusManager.replace(
+                "MPNowPlayingInfoPropertyPlaybackQueueCount: queueManager.getQueueCount()",
+                "MPNowPlayingInfoPropertyPlaybackQueueCount: queueManager.getQueueCount(),\n            MPNowPlayingInfoPropertyIsLiveStream: false"
+              );
+                            const oldArt = [
+                "        if let artworkUrlStr = track.artwork {",
+                "            if let cached = imageCache.object(forKey: artworkUrlStr as NSString) {",
+                "                let artwork = MPMediaItemArtwork(boundsSize: cached.size) { _ in cached }",
+                "                info[MPMediaItemPropertyArtwork] = artwork",
+                "            } else if let url = URL(string: artworkUrlStr) {",
+                "                loadImage(from: url) { [weak self] image in",
+                "                    guard let self = self, let image = image else { return }",
+                "                    self.imageCache.setObject(image, forKey: artworkUrlStr as NSString)",
+                "                    DispatchQueue.main.async {",
+                "                        if var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo {",
+                "                            if currentInfo[MPMediaItemPropertyTitle] as? String == track.title {",
+                "                                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }",
+                "                                currentInfo[MPMediaItemPropertyArtwork] = artwork",
+                "                                MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo",
+                "                            }",
+                "                        }",
+                "                    }",
+                "                }",
+                "            }",
+                "        }"
+              ].join("\n");
+              const newArt = [
+                "        var hasArtwork = false",
+                "        if let artworkUrlStr = track.artwork {",
+                "            if let cached = imageCache.object(forKey: artworkUrlStr as NSString) {",
+                "                let artwork = MPMediaItemArtwork(boundsSize: cached.size) { _ in cached }",
+                "                info[MPMediaItemPropertyArtwork] = artwork",
+                "                hasArtwork = true",
+                "            } else if let url = URL(string: artworkUrlStr) {",
+                "                loadImage(from: url) { [weak self] image in",
+                "                    guard let self = self, let image = image else { return }",
+                "                    self.imageCache.setObject(image, forKey: artworkUrlStr as NSString)",
+                "                    DispatchQueue.main.async {",
+                "                        if var currentInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo {",
+                "                            if currentInfo[MPMediaItemPropertyTitle] as? String == track.title {",
+                "                                let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }",
+                "                                currentInfo[MPMediaItemPropertyArtwork] = artwork",
+                "                                MPNowPlayingInfoCenter.default().nowPlayingInfo = currentInfo",
+                "                            }",
+                "                        }",
+                "                    }",
+                "                }",
+                "            }",
+                "        }",
+                "        if !hasArtwork {",
+                "            let fallbackSize = CGSize(width: 300, height: 300)",
+                "            let renderer = UIGraphicsImageRenderer(size: fallbackSize)",
+                "            let fallbackImg = renderer.image { ctx in",
+                "                UIColor(red: 0x93/255.0, green: 0x33/255.0, blue: 0xEA/255.0, alpha: 1.0).setFill()",
+                "                ctx.fill(CGRect(origin: .zero, size: fallbackSize))",
+                "                if let symbol = UIImage(systemName: \"music.note\")?.withTintColor(.white, renderingMode: .alwaysOriginal) {",
+                "                    symbol.draw(in: CGRect(x: 75, y: 75, width: 150, height: 150))",
+                "                }",
+                "            }",
+                "            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: fallbackSize) { _ in fallbackImg }",
+                "        }"
+              ].join("\n");
+              if (orpheusManager.includes("if let artworkUrlStr = track.artwork {")) {
+                orpheusManager = orpheusManager.replace(oldArt, newArt);
+              }
+              fs.writeFileSync(orpheusManagerPath, orpheusManager, "utf8");
+              console.log("✅ 已在 OrpheusPlayerManager.swift 中增强 Now Playing 元数据与保底封面，确保触发灵动岛飞入动画");
             }
           }
 
