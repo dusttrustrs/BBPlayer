@@ -2065,7 +2065,7 @@ jobs:
             if (!appStoreTypes.includes("openPlayerOnTrackPress")) {
               appStoreTypes = appStoreTypes.replace(
                 "hideStarPrompt: boolean",
-                "hideStarPrompt: boolean\n\topenPlayerOnTrackPress?: boolean\n\tenableSystemMediaControl?: boolean"
+                "hideStarPrompt: boolean\n\topenPlayerOnTrackPress?: boolean\n\tenableSystemMediaControl?: boolean\n\tdownloadAudioOnly?: boolean\n\tthemeColor?: string"
               );
               fs.writeFileSync(appStoreTypesPath, appStoreTypes, "utf8");
               console.log("✅ 已在 appStore.ts 中声明 openPlayerOnTrackPress 与 enableSystemMediaControl 配置项");
@@ -2078,7 +2078,7 @@ jobs:
             if (!useAppStoreCode.includes("openPlayerOnTrackPress:")) {
               useAppStoreCode = useAppStoreCode.replace(
                 "hideStarPrompt: false,",
-                "hideStarPrompt: false,\n\t\t\t\t\topenPlayerOnTrackPress: true,\n\t\t\t\t\tenableSystemMediaControl: true,\n\t\t\t\t\tdownloadAudioOnly: true,\n\t\t\t\t\tdownloadAudioOnly: true,\n\t\t\t\t\tdownloadAudioOnly: true,"
+                "hideStarPrompt: false,\n\t\t\t\t\topenPlayerOnTrackPress: true,\n\t\t\t\t\tenableSystemMediaControl: true,\n\t\t\t\t\tdownloadAudioOnly: true,\n\t\t\t\t\tthemeColor: undefined,\n\t\t\t\t\tdownloadAudioOnly: true,\n\t\t\t\t\tdownloadAudioOnly: true,"
               );
             }
             if (!useAppStoreCode.includes("updates.enableSystemMediaControl !== undefined")) {
@@ -2590,7 +2590,7 @@ jobs:
             if (!layoutCode.includes("contentStyle: { backgroundColor: appBg }")) {
               layoutCode = layoutCode.replace(
                 "function RootLayout() {",
-                "function RootLayout() {\n  const colorScheme = useColorScheme()\n  const isDark = colorScheme === 'dark'\n  const appBg = isDark ? '#141218' : '#FEF7FF'"
+                "function RootLayout() {\n  const colorScheme = useColorScheme()\n  const themeColor = useAppStore((state) => state.settings.themeColor)\n  const isDark = colorScheme === 'dark'\n  const appBg = isDark ? '#141218' : '#FEF7FF'"
               );
               layoutCode = layoutCode.replace(
                 "<View style={styles.appContainer}>",
@@ -4486,6 +4486,221 @@ jobs:
               );
               fs.writeFileSync(lyricsSearchPath, lyricCode, "utf8");
               console.log("✅ 已为 manualSearch 歌词查询添加 meta: { silent: true } 防护");
+            }
+          }
+
+          // 36. 优化更新提示弹窗（UpdateAppModal.tsx）：固定高度窗口滚动与跳过版本提示
+          const updateModalPath = "apps/mobile/src/components/modals/app/UpdateAppModal.tsx";
+          if (fs.existsSync(updateModalPath)) {
+            let umCode = fs.readFileSync(updateModalPath, "utf8");
+            if (!umCode.includes("Dialog.ScrollArea")) {
+              umCode = umCode.replace(
+                "import { Platform, StyleSheet, View } from 'react-native'",
+                "import { Platform, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native'"
+              );
+              umCode = umCode.replace(
+                "const [isUpdating] = useState(false)",
+                "const { height: windowHeight } = useWindowDimensions()\n  const maxScrollHeight = Math.min(380, Math.max(220, windowHeight * 0.45))\n  const [isUpdating, setIsUpdating] = useState(false)"
+              );
+              umCode = umCode.replace(
+                "storage.set('skip_version', version)\n    close()",
+                "storage.set('skip_version', version)\n    toast.info(`已跳过版本 ${version}，新版本发布前将不再提示`)\n    close()"
+              );
+              const oldDialogContent = /<Dialog\.Content>[\s\S]*?<\/Dialog\.Content>/;
+              const newDialogContent = [
+                "<Dialog.ScrollArea style={[styles.scrollArea, { maxHeight: maxScrollHeight }]}>",
+                "        <ScrollView",
+                "          style={styles.scrollView}",
+                "          contentContainerStyle={styles.scrollContent}",
+                "          showsVerticalScrollIndicator",
+                "          nestedScrollEnabled",
+                "        >",
+                "          {forced ? (",
+                "            <Text style={[styles.forcedText, { color: colors.error }]}>",
+                "              此更新为强制更新，必须安装后继续使用。",
+                "            </Text>",
+                "          ) : null}",
+                "          {listed_notes && listed_notes.length > 0 ? (",
+                "            listed_notes.map((note, index) => (",
+                "              <Text",
+                "                selectable",
+                "                key={index}",
+                "                style={styles.noteText}",
+                "              >",
+                "                {`• ${note}`}",
+                "              </Text>",
+                "            ))",
+                "          ) : (",
+                "            <Text selectable style={styles.rawNotesText}>",
+                "              {notes?.trim() || '提高软件稳定性，优化软件流畅度'}",
+                "            </Text>",
+                "          )}",
+                "        </ScrollView>",
+                "      </Dialog.ScrollArea>"
+              ].join("\n");
+              umCode = umCode.replace(oldDialogContent, newDialogContent);
+              umCode = umCode.replace(
+                "const styles = StyleSheet.create({",
+                "const styles = StyleSheet.create({\n  dialogTitle: {\n    paddingHorizontal: 24,\n    paddingTop: 16,\n    paddingBottom: 8,\n    fontSize: 20,\n    fontWeight: 'bold',\n  },\n  scrollArea: {\n    paddingHorizontal: 0,\n    borderTopWidth: StyleSheet.hairlineWidth,\n    borderBottomWidth: StyleSheet.hairlineWidth,\n    borderColor: 'rgba(128, 128, 128, 0.2)',\n  },\n  scrollView: {\n    flexGrow: 0,\n  },\n  scrollContent: {\n    paddingHorizontal: 24,\n    paddingVertical: 14,\n  },\n  rawNotesText: {\n    lineHeight: 22,\n    fontSize: 14,\n  },"
+              );
+              fs.writeFileSync(updateModalPath, umCode, "utf8");
+              console.log("✅ 已在 UpdateAppModal.tsx 中实现固定高度滚动窗口与跳过版本提示");
+            }
+          }
+
+          // 37. 音乐库装扮背景与栏目位置贴合：将各个栏目和指示分割线整体向上移动匹配装扮背景
+          const skinBgPath = "apps/mobile/src/components/navigation/SkinAppbarBackground.tsx";
+          if (fs.existsSync(skinBgPath)) {
+            let sbg = fs.readFileSync(skinBgPath, "utf8");
+            if (!sbg.includes("fadeHeight")) {
+              sbg = sbg.replace(
+                "interface SkinAppbarBackgroundProps {\n\theight: number\n}",
+                "interface SkinAppbarBackgroundProps {\n\theight: number\n\tfadeHeight?: number\n}"
+              );
+              sbg = sbg.replace(
+                "const SkinAppbarBackground = memo(function SkinAppbarBackground({\n\theight,\n}: SkinAppbarBackgroundProps) {",
+                "const SkinAppbarBackground = memo(function SkinAppbarBackground({\n\theight,\n\tfadeHeight = 56,\n}: SkinAppbarBackgroundProps) {"
+              );
+              sbg = sbg.replace(
+                "style={styles.fade}\n\t\t\t/>",
+                "style={[styles.fade, { height: fadeHeight }]}\n\t\t\t/>"
+              );
+              fs.writeFileSync(skinBgPath, sbg, "utf8");
+              console.log("✅ 已在 SkinAppbarBackground 中支持自定义 fadeHeight");
+            }
+          }
+
+          const libraryTabPath = "apps/mobile/src/app/(tabs)/library/[tab].tsx";
+          if (fs.existsSync(libraryTabPath)) {
+            let libCode = fs.readFileSync(libraryTabPath, "utf8");
+            if (!libCode.includes("height={insets.top + 80}")) {
+              libCode = libCode.replace(
+                "<SkinAppbarBackground height={insets.top + 100} />",
+                "<SkinAppbarBackground height={insets.top + 80} fadeHeight={32} />"
+              );
+              libCode = libCode.replace(
+                "paddingTop: insets.top + 8,",
+                "paddingTop: insets.top + 2,"
+              );
+              libCode = libCode.replace(
+                "marginBottom: 8,\n\t\t\t\t\t\t\t\tmarginTop: 8,",
+                "marginBottom: 0,\n\t\t\t\t\t\t\t\tmarginTop: 0,\n\t\t\t\t\t\t\t\televation: 0,\n\t\t\t\t\t\t\t\tshadowOpacity: 0,"
+              );
+              libCode = libCode.replace(
+                "indicatorStyle={{ backgroundColor: colors.onSecondaryContainer }}",
+                "tabStyle={{ minHeight: 40, paddingVertical: 0 }}\n\t\t\t\t\t\t\tindicatorStyle={{ backgroundColor: colors.primary, height: 2 }}"
+              );
+              libCode = libCode.replace(
+                "activeColor={colors.onSecondaryContainer}",
+                "activeColor={colors.primary}"
+              );
+              fs.writeFileSync(libraryTabPath, libCode, "utf8");
+              console.log("✅ 已在 library/[tab].tsx 中调整栏目与分割线位置紧贴装扮背景");
+            }
+          }
+
+          // 38. 在「设置-外观与主题」中添加全局自定义主题色（预设红橙黄绿蓝靛紫与调色盘弹窗），保留深色/浅色背景
+          const matColorsPath = "apps/mobile/src/lib/theme/material3Colors.ts";
+          if (fs.existsSync(matColorsPath)) {
+            let mc = fs.readFileSync(matColorsPath, "utf8");
+            if (!mc.includes("customPrimaryColor")) {
+              mc = mc.replace(
+                "import { Color } from 'expo-router'",
+                "import ColorJS from 'color'\nimport { Color } from 'expo-router'"
+              );
+              mc = mc.replace(
+                "export function buildMaterial3PaperColors(\n\tcolorScheme: ColorSchemeName,\n): MD3Colors {",
+                [
+                  "export function buildMaterial3PaperColors(",
+                  "  colorScheme: ColorSchemeName,",
+                  "  customPrimaryColor?: string,",
+                  "): MD3Colors {",
+                  "  const isDark = colorScheme === 'dark'",
+                  "  const d = Color.android.dynamic",
+                  "  const fallback = isDark ? MD3DarkTheme.colors : MD3LightTheme.colors",
+                  "",
+                  "  let primary = (d.primary as string) ?? fallback.primary",
+                  "  let primaryContainer = (d.primaryContainer as string) ?? fallback.primaryContainer",
+                  "  let onPrimary = (d.onPrimary as string) ?? fallback.onPrimary",
+                  "  let onPrimaryContainer = (d.onPrimaryContainer as string) ?? fallback.onPrimaryContainer",
+                  "  let secondary = (d.secondary as string) ?? fallback.secondary",
+                  "  let secondaryContainer = (d.secondaryContainer as string) ?? fallback.secondaryContainer",
+                  "  let onSecondaryContainer = (d.onSecondaryContainer as string) ?? fallback.onSecondaryContainer",
+                  "  let inversePrimary = (d.primaryInverse as string) ?? fallback.inversePrimary",
+                  "",
+                  "  if (customPrimaryColor) {",
+                  "    try {",
+                  "      const c = ColorJS(customPrimaryColor)",
+                  "      if (isDark) {",
+                  "        const lum = c.luminosity()",
+                  "        const tuned = lum < 0.15 ? c.lighten(0.35) : c",
+                  "        primary = tuned.hex()",
+                  "        onPrimary = tuned.isDark() ? '#ffffff' : '#000000'",
+                  "        primaryContainer = c.mix(ColorJS('#000000'), 0.6).hex()",
+                  "        onPrimaryContainer = c.lighten(0.5).hex()",
+                  "        secondary = c.mix(ColorJS(fallback.secondary), 0.35).hex()",
+                  "        secondaryContainer = c.mix(ColorJS('#1d1b20'), 0.75).hex()",
+                  "        onSecondaryContainer = c.lighten(0.4).hex()",
+                  "        inversePrimary = c.darken(0.2).hex()",
+                  "      } else {",
+                  "        primary = c.hex()",
+                  "        onPrimary = c.isDark() ? '#ffffff' : '#000000'",
+                  "        primaryContainer = c.mix(ColorJS('#ffffff'), 0.85).hex()",
+                  "        onPrimaryContainer = c.darken(0.5).hex()",
+                  "        secondary = c.mix(ColorJS(fallback.secondary), 0.35).hex()",
+                  "        secondaryContainer = c.mix(ColorJS('#ffffff'), 0.88).hex()",
+                  "        onSecondaryContainer = c.darken(0.4).hex()",
+                  "        inversePrimary = c.lighten(0.3).hex()",
+                  "      }",
+                  "    } catch {}",
+                  "  }"
+                ].join("\n")
+              );
+              mc = mc.replace(
+                "return {\n\t\tprimary: (d.primary as string) ?? fallback.primary,\n\t\tprimaryContainer:\n\t\t\t(d.primaryContainer as string) ?? fallback.primaryContainer,\n\t\tsecondary: (d.secondary as string) ?? fallback.secondary,\n\t\tsecondaryContainer:\n\t\t\t(d.secondaryContainer as string) ?? fallback.secondaryContainer,\n\t\ttertiary: (d.tertiary as string) ?? fallback.tertiary,",
+                "return {\n    primary,\n    primaryContainer,\n    secondary,\n    secondaryContainer,\n    tertiary: (d.tertiary as string) ?? fallback.tertiary,"
+              );
+              mc = mc.replace(
+                "\n\t\tonPrimary: (d.onPrimary as string) ?? fallback.onPrimary,\n\t\tonPrimaryContainer:\n\t\t\t(d.onPrimaryContainer as string) ?? fallback.onPrimaryContainer,\n\t\tonSecondary: (d.onSecondary as string) ?? fallback.onSecondary,\n\t\tonSecondaryContainer:\n\t\t\t(d.onSecondaryContainer as string) ?? fallback.onSecondaryContainer,",
+                "\n    onPrimary,\n    onPrimaryContainer,\n    onSecondary: (d.onSecondary as string) ?? fallback.onSecondary,\n    onSecondaryContainer,"
+              );
+              mc = mc.replace(
+                "inversePrimary: (d.primaryInverse as string) ?? fallback.inversePrimary,",
+                "inversePrimary,"
+              );
+              fs.writeFileSync(matColorsPath, mc, "utf8");
+              console.log("✅ 已在 material3Colors.ts 中实现自定义主题色支持");
+            }
+          }
+
+          const themePickerPath = "apps/mobile/src/features/theme/ThemeColorPickerModal.tsx";
+          if (!fs.existsSync(themePickerPath)) {
+            fs.mkdirSync(path.dirname(themePickerPath), { recursive: true });
+            fs.writeFileSync(themePickerPath, "import { Slider } from '@expo/ui/community/slider'\nimport Color from 'color'\nimport { LinearGradient } from 'expo-linear-gradient'\nimport { useEffect, useState } from 'react'\nimport {\n\tKeyboardAvoidingView,\n\tPlatform,\n\tPressable,\n\tScrollView,\n\tStyleSheet,\n\tView,\n} from 'react-native'\nimport {\n\tButton,\n\tDialog,\n\tHelperText,\n\tPortal,\n\tText,\n\tTextInput,\n\tuseTheme,\n} from 'react-native-paper'\n\ninterface ThemeColorPickerModalProps {\n\tvisible: boolean\n\tcurrentColor?: string\n\tonDismiss: () => void\n\tonSelect: (hex: string) => void\n}\n\nconst PALETTE_SWATCHES = [\n\t'#F44336', // 红\n\t'#E91E63', // 粉\n\t'#9C27B0', // 紫\n\t'#673AB7', // 深紫\n\t'#3F51B5', // 靛\n\t'#2196F3', // 蓝\n\t'#03A9F4', // 天蓝\n\t'#00BCD4', // 青\n\t'#009688', // 墨绿\n\t'#4CAF50', // 绿\n\t'#8BC34A', // 浅绿\n\t'#FFC107', // 琥珀\n\t'#FF9800', // 橙\n\t'#FF5722', // 深橙\n\t'#795548', // 棕\n\t'#607D8B', // 蓝灰\n]\n\nexport default function ThemeColorPickerModal({\n\tvisible,\n\tcurrentColor,\n\tonDismiss,\n\tonSelect,\n}: ThemeColorPickerModalProps) {\n\tconst colors = useTheme().colors\n\tconst [hue, setHue] = useState(210)\n\tconst [saturation, setSaturation] = useState(80)\n\tconst [lightness, setLightness] = useState(50)\n\tconst [hexInput, setHexInput] = useState('#2196F3')\n\tconst [inputError, setInputError] = useState<string | null>(null)\n\n\tuseEffect(() => {\n\t\tif (!visible) return\n\t\ttry {\n\t\t\tconst initialHex = currentColor && Color(currentColor) ? currentColor : '#2196F3'\n\t\t\tconst c = Color(initialHex)\n\t\t\tsetHue(Math.round(c.hue()))\n\t\t\tsetSaturation(Math.round(c.saturationl()))\n\t\t\tsetLightness(Math.round(c.lightness()))\n\t\t\tsetHexInput(c.hex().toUpperCase())\n\t\t\tsetInputError(null)\n\t\t} catch {\n\t\t\tsetHue(210)\n\t\t\tsetSaturation(80)\n\t\t\tsetLightness(50)\n\t\t\tsetHexInput('#2196F3')\n\t\t\tsetInputError(null)\n\t\t}\n\t}, [visible, currentColor])\n\n\tconst currentHex = (() => {\n\t\ttry {\n\t\t\treturn Color.hsl(hue, saturation, lightness).hex().toUpperCase()\n\t\t} catch {\n\t\t\treturn '#2196F3'\n\t\t}\n\t})()\n\n\tconst isDarkColor = (() => {\n\t\ttry {\n\t\t\treturn Color(currentHex).isDark()\n\t\t} catch {\n\t\t\treturn false\n\t\t}\n\t})()\n\n\tconst handleSwatchPress = (colorHex: string) => {\n\t\ttry {\n\t\t\tconst c = Color(colorHex)\n\t\t\tsetHue(Math.round(c.hue()))\n\t\t\tsetSaturation(Math.round(c.saturationl()))\n\t\t\tsetLightness(Math.round(c.lightness()))\n\t\t\tsetHexInput(c.hex().toUpperCase())\n\t\t\tsetInputError(null)\n\t\t} catch {\n\t\t\t// ignore\n\t\t}\n\t}\n\n\tconst handleHexInputChange = (text: string) => {\n\t\tlet formatted = text.trim()\n\t\tif (!formatted.startsWith('#')) {\n\t\t\tformatted = '#' + formatted\n\t\t}\n\t\tsetHexInput(formatted)\n\n\t\tif (/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(formatted)) {\n\t\t\ttry {\n\t\t\t\tconst c = Color(formatted)\n\t\t\t\tsetHue(Math.round(c.hue()))\n\t\t\t\tsetSaturation(Math.round(c.saturationl()))\n\t\t\t\tsetLightness(Math.round(c.lightness()))\n\t\t\t\tsetInputError(null)\n\t\t\t} catch {\n\t\t\t\tsetInputError('无效的十六进制颜色')\n\t\t\t}\n\t\t} else {\n\t\t\tsetInputError('请输入合法的 HEX 颜色代码，例如 #2196F3')\n\t\t}\n\t}\n\n\tconst handleConfirm = () => {\n\t\tonSelect(currentHex)\n\t\tonDismiss()\n\t}\n\n\treturn (\n\t\t<Portal>\n\t\t\t<Dialog\n\t\t\t\tvisible={visible}\n\t\t\t\tonDismiss={onDismiss}\n\t\t\t\tstyle={[styles.dialog, { backgroundColor: colors.surface }]}\n\t\t\t>\n\t\t\t\t<Dialog.Title style={styles.title}>自定义主题色</Dialog.Title>\n\t\t\t\t<Dialog.ScrollArea style={styles.scrollArea}>\n\t\t\t\t\t<KeyboardAvoidingView\n\t\t\t\t\t\tbehavior={Platform.OS === 'ios' ? 'padding' : undefined}\n\t\t\t\t\t>\n\t\t\t\t\t\t<ScrollView\n\t\t\t\t\t\t\tcontentContainerStyle={styles.scrollContent}\n\t\t\t\t\t\t\tshowsVerticalScrollIndicator={false}\n\t\t\t\t\t\t\tkeyboardShouldPersistTaps='handled'\n\t\t\t\t\t\t>\n\t\t\t\t\t\t\t{/* 实时预览条 */}\n\t\t\t\t\t\t\t<View\n\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\tstyles.previewCard,\n\t\t\t\t\t\t\t\t\t{ backgroundColor: currentHex },\n\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t<Text\n\t\t\t\t\t\t\t\t\tvariant='titleMedium'\n\t\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\t\tstyles.previewText,\n\t\t\t\t\t\t\t\t\t\t{ color: isDarkColor ? '#FFFFFF' : '#000000' },\n\t\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t{currentHex}\n\t\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t</View>\n\n\t\t\t\t\t\t\t{/* HEX 代码输入 */}\n\t\t\t\t\t\t\t<TextInput\n\t\t\t\t\t\t\t\tmode='outlined'\n\t\t\t\t\t\t\t\tdense\n\t\t\t\t\t\t\t\tlabel='HEX 颜色代码'\n\t\t\t\t\t\t\t\tvalue={hexInput}\n\t\t\t\t\t\t\t\tonChangeText={handleHexInputChange}\n\t\t\t\t\t\t\t\tautoCapitalize='characters'\n\t\t\t\t\t\t\t\tplaceholder='#RRGGBB'\n\t\t\t\t\t\t\t\tstyle={styles.textInput}\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t{inputError ? (\n\t\t\t\t\t\t\t\t<HelperText type='error' visible={!!inputError}>\n\t\t\t\t\t\t\t\t\t{inputError}\n\t\t\t\t\t\t\t\t</HelperText>\n\t\t\t\t\t\t\t) : null}\n\n\t\t\t\t\t\t\t{/* 快速色板 */}\n\t\t\t\t\t\t\t<Text variant='labelMedium' style={styles.sliderLabel}>\n\t\t\t\t\t\t\t\t推荐色板\n\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t<View style={styles.swatchGrid}>\n\t\t\t\t\t\t\t\t{PALETTE_SWATCHES.map((swatch) => {\n\t\t\t\t\t\t\t\t\tconst isSelected =\n\t\t\t\t\t\t\t\t\t\tcurrentHex.toLowerCase() === swatch.toLowerCase()\n\t\t\t\t\t\t\t\t\treturn (\n\t\t\t\t\t\t\t\t\t\t<Pressable\n\t\t\t\t\t\t\t\t\t\t\tkey={swatch}\n\t\t\t\t\t\t\t\t\t\t\tonPress={() => handleSwatchPress(swatch)}\n\t\t\t\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\t\t\t\tstyles.swatch,\n\t\t\t\t\t\t\t\t\t\t\t\t{ backgroundColor: swatch },\n\t\t\t\t\t\t\t\t\t\t\t\tisSelected && styles.swatchSelected,\n\t\t\t\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t\t\t\t\taccessibilityRole='button'\n\t\t\t\t\t\t\t\t\t\t\taccessibilityLabel={`选择颜色 ${swatch}`}\n\t\t\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t\t\t)\n\t\t\t\t\t\t\t\t})}\n\t\t\t\t\t\t\t</View>\n\n\t\t\t\t\t\t\t{/* 色相滑块 */}\n\t\t\t\t\t\t\t<View style={styles.sliderSection}>\n\t\t\t\t\t\t\t\t<View style={styles.sliderHeader}>\n\t\t\t\t\t\t\t\t\t<Text variant='labelMedium'>色相 (Hue)</Text>\n\t\t\t\t\t\t\t\t\t<Text variant='bodySmall' style={{ color: colors.onSurfaceVariant }}>\n\t\t\t\t\t\t\t\t\t\t{hue}°\n\t\t\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t\t\t<LinearGradient\n\t\t\t\t\t\t\t\t\tcolors={[\n\t\t\t\t\t\t\t\t\t\t'#FF0000',\n\t\t\t\t\t\t\t\t\t\t'#FFFF00',\n\t\t\t\t\t\t\t\t\t\t'#00FF00',\n\t\t\t\t\t\t\t\t\t\t'#00FFFF',\n\t\t\t\t\t\t\t\t\t\t'#0000FF',\n\t\t\t\t\t\t\t\t\t\t'#FF00FF',\n\t\t\t\t\t\t\t\t\t\t'#FF0000',\n\t\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t\t\tstart={{ x: 0, y: 0.5 }}\n\t\t\t\t\t\t\t\t\tend={{ x: 1, y: 0.5 }}\n\t\t\t\t\t\t\t\t\tstyle={styles.gradientBar}\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t\t<Slider\n\t\t\t\t\t\t\t\t\tminimumValue={0}\n\t\t\t\t\t\t\t\t\tmaximumValue={360}\n\t\t\t\t\t\t\t\t\tstep={1}\n\t\t\t\t\t\t\t\t\tvalue={hue}\n\t\t\t\t\t\t\t\t\tonValueChange={(val) => {\n\t\t\t\t\t\t\t\t\t\tsetHue(Math.round(val))\n\t\t\t\t\t\t\t\t\t\ttry {\n\t\t\t\t\t\t\t\t\t\t\tconst updated = Color.hsl(Math.round(val), saturation, lightness)\n\t\t\t\t\t\t\t\t\t\t\tsetHexInput(updated.hex().toUpperCase())\n\t\t\t\t\t\t\t\t\t\t\tsetInputError(null)\n\t\t\t\t\t\t\t\t\t\t} catch {\n\t\t\t\t\t\t\t\t\t\t\t// ignore\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t}}\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t</View>\n\n\t\t\t\t\t\t\t{/* 亮度滑块 */}\n\t\t\t\t\t\t\t<View style={styles.sliderSection}>\n\t\t\t\t\t\t\t\t<View style={styles.sliderHeader}>\n\t\t\t\t\t\t\t\t\t<Text variant='labelMedium'>亮度 (Lightness)</Text>\n\t\t\t\t\t\t\t\t\t<Text variant='bodySmall' style={{ color: colors.onSurfaceVariant }}>\n\t\t\t\t\t\t\t\t\t\t{lightness}%\n\t\t\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t\t\t<Slider\n\t\t\t\t\t\t\t\t\tminimumValue={20}\n\t\t\t\t\t\t\t\t\tmaximumValue={85}\n\t\t\t\t\t\t\t\t\tstep={1}\n\t\t\t\t\t\t\t\t\tvalue={lightness}\n\t\t\t\t\t\t\t\t\tonValueChange={(val) => {\n\t\t\t\t\t\t\t\t\t\tsetLightness(Math.round(val))\n\t\t\t\t\t\t\t\t\t\ttry {\n\t\t\t\t\t\t\t\t\t\t\tconst updated = Color.hsl(hue, saturation, Math.round(val))\n\t\t\t\t\t\t\t\t\t\t\tsetHexInput(updated.hex().toUpperCase())\n\t\t\t\t\t\t\t\t\t\t\tsetInputError(null)\n\t\t\t\t\t\t\t\t\t\t} catch {\n\t\t\t\t\t\t\t\t\t\t\t// ignore\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t}}\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t</View>\n\n\t\t\t\t\t\t\t{/* 饱和度滑块 */}\n\t\t\t\t\t\t\t<View style={styles.sliderSection}>\n\t\t\t\t\t\t\t\t<View style={styles.sliderHeader}>\n\t\t\t\t\t\t\t\t\t<Text variant='labelMedium'>饱和度 (Saturation)</Text>\n\t\t\t\t\t\t\t\t\t<Text variant='bodySmall' style={{ color: colors.onSurfaceVariant }}>\n\t\t\t\t\t\t\t\t\t\t{saturation}%\n\t\t\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t\t\t<Slider\n\t\t\t\t\t\t\t\t\tminimumValue={20}\n\t\t\t\t\t\t\t\t\tmaximumValue={100}\n\t\t\t\t\t\t\t\t\tstep={1}\n\t\t\t\t\t\t\t\t\tvalue={saturation}\n\t\t\t\t\t\t\t\t\tonValueChange={(val) => {\n\t\t\t\t\t\t\t\t\t\tsetSaturation(Math.round(val))\n\t\t\t\t\t\t\t\t\t\ttry {\n\t\t\t\t\t\t\t\t\t\t\tconst updated = Color.hsl(hue, Math.round(val), lightness)\n\t\t\t\t\t\t\t\t\t\t\tsetHexInput(updated.hex().toUpperCase())\n\t\t\t\t\t\t\t\t\t\t\tsetInputError(null)\n\t\t\t\t\t\t\t\t\t\t} catch {\n\t\t\t\t\t\t\t\t\t\t\t// ignore\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t}}\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t</ScrollView>\n\t\t\t\t\t</KeyboardAvoidingView>\n\t\t\t\t</Dialog.ScrollArea>\n\t\t\t\t<Dialog.Actions>\n\t\t\t\t\t<Button onPress={onDismiss}>取消</Button>\n\t\t\t\t\t<Button mode='contained' onPress={handleConfirm}>\n\t\t\t\t\t\t确认\n\t\t\t\t\t</Button>\n\t\t\t\t</Dialog.Actions>\n\t\t\t</Dialog>\n\t\t</Portal>\n\t)\n}\n\nconst styles = StyleSheet.create({\n\tdialog: {\n\t\tborderRadius: 16,\n\t\tmaxHeight: '90%',\n\t},\n\ttitle: {\n\t\ttextAlign: 'center',\n\t\tfontSize: 18,\n\t\tfontWeight: 'bold',\n\t},\n\tscrollArea: {\n\t\tpaddingHorizontal: 16,\n\t\tpaddingVertical: 8,\n\t\tmaxHeight: 460,\n\t},\n\tscrollContent: {\n\t\tpaddingBottom: 16,\n\t},\n\tpreviewCard: {\n\t\theight: 48,\n\t\tborderRadius: 12,\n\t\talignItems: 'center',\n\t\tjustifyContent: 'center',\n\t\tmarginBottom: 12,\n\t\televation: 2,\n\t\tshadowColor: '#000',\n\t\tshadowOffset: { width: 0, height: 2 },\n\t\tshadowOpacity: 0.15,\n\t\tshadowRadius: 4,\n\t},\n\tpreviewText: {\n\t\tfontWeight: 'bold',\n\t\tletterSpacing: 1.5,\n\t},\n\ttextInput: {\n\t\tmarginBottom: 4,\n\t},\n\tswatchGrid: {\n\t\tflexDirection: 'row',\n\t\tflexWrap: 'wrap',\n\t\tgap: 8,\n\t\tmarginVertical: 10,\n\t\tjustifyContent: 'space-between',\n\t},\n\tswatch: {\n\t\twidth: 32,\n\t\theight: 32,\n\t\tborderRadius: 16,\n\t\tborderWidth: 1.5,\n\t\tborderColor: 'rgba(255,255,255,0.2)',\n\t},\n\tswatchSelected: {\n\t\tborderColor: '#FFFFFF',\n\t\tborderWidth: 3,\n\t\ttransform: [{ scale: 1.15 }],\n\t},\n\tsliderSection: {\n\t\tmarginTop: 10,\n\t},\n\tsliderHeader: {\n\t\tflexDirection: 'row',\n\t\tjustifyContent: 'space-between',\n\t\talignItems: 'center',\n\t\tmarginBottom: 4,\n\t},\n\tsliderLabel: {\n\t\tmarginTop: 8,\n\t},\n\tgradientBar: {\n\t\theight: 8,\n\t\tborderRadius: 4,\n\t\tmarginBottom: 6,\n\t},\n})\n", "utf8");
+            console.log("✅ 已写入 ThemeColorPickerModal.tsx");
+          }
+
+          const themeSectionPath = "apps/mobile/src/features/theme/ThemeColorSection.tsx";
+          if (!fs.existsSync(themeSectionPath)) {
+            fs.mkdirSync(path.dirname(themeSectionPath), { recursive: true });
+            fs.writeFileSync(themeSectionPath, "import Icon from '@react-native-vector-icons/material-design-icons'\nimport Color from 'color'\nimport { useState } from 'react'\nimport { Pressable, ScrollView, StyleSheet, View } from 'react-native'\nimport { Text, useTheme } from 'react-native-paper'\n\nimport ThemeColorPickerModal from './ThemeColorPickerModal'\n\nimport useAppStore from '@/hooks/stores/useAppStore'\n\nexport interface ThemePreset {\n\tkey: string\n\tlabel: string\n\tcolor?: string\n}\n\nexport const THEME_COLOR_PRESETS: ThemePreset[] = [\n\t{ key: 'default', label: '默认', color: undefined },\n\t{ key: 'red', label: '红', color: '#E53935' },\n\t{ key: 'orange', label: '橙', color: '#FB8C00' },\n\t{ key: 'yellow', label: '黄', color: '#FBC02D' },\n\t{ key: 'green', label: '绿', color: '#43A047' },\n\t{ key: 'blue', label: '蓝', color: '#1E88E5' },\n\t{ key: 'indigo', label: '靛', color: '#3949AB' },\n\t{ key: 'violet', label: '紫', color: '#8E24AA' },\n]\n\nexport default function ThemeColorSection() {\n\tconst colors = useTheme().colors\n\tconst themeColor = useAppStore((state) => state.settings.themeColor)\n\tconst setSettings = useAppStore((state) => state.setSettings)\n\tconst [pickerVisible, setPickerVisible] = useState(false)\n\n\tconst isPresetMatch = (presetColor?: string) => {\n\t\tif (!themeColor && !presetColor) return true\n\t\tif (!themeColor || !presetColor) return false\n\t\treturn themeColor.toLowerCase() === presetColor.toLowerCase()\n\t}\n\n\tconst isCustomActive =\n\t\tBoolean(themeColor) &&\n\t\t!THEME_COLOR_PRESETS.some(\n\t\t\t(p) => p.color && p.color.toLowerCase() === themeColor?.toLowerCase(),\n\t\t)\n\n\tconst handleSelectPreset = (color?: string) => {\n\t\tsetSettings({ themeColor: color })\n\t}\n\n\tconst handleCustomColorSelected = (colorHex: string) => {\n\t\tsetSettings({ themeColor: colorHex })\n\t}\n\n\treturn (\n\t\t<View style={styles.container}>\n\t\t\t<ScrollView\n\t\t\t\thorizontal\n\t\t\t\tshowsHorizontalScrollIndicator={false}\n\t\t\t\tcontentContainerStyle={styles.scrollContainer}\n\t\t\t>\n\t\t\t\t{THEME_COLOR_PRESETS.map((preset) => {\n\t\t\t\t\tconst active = isPresetMatch(preset.color) && !isCustomActive\n\t\t\t\t\tconst displayColor = preset.color ?? colors.primary\n\t\t\t\t\tconst isDark = (() => {\n\t\t\t\t\t\ttry {\n\t\t\t\t\t\t\treturn Color(displayColor).isDark()\n\t\t\t\t\t\t} catch {\n\t\t\t\t\t\t\treturn true\n\t\t\t\t\t\t}\n\t\t\t\t\t})()\n\n\t\t\t\t\treturn (\n\t\t\t\t\t\t<Pressable\n\t\t\t\t\t\t\tkey={preset.key}\n\t\t\t\t\t\t\tstyle={styles.item}\n\t\t\t\t\t\t\tonPress={() => handleSelectPreset(preset.color)}\n\t\t\t\t\t\t\taccessibilityRole='button'\n\t\t\t\t\t\t\taccessibilityLabel={`选择${preset.label}主题色`}\n\t\t\t\t\t\t>\n\t\t\t\t\t\t\t<View\n\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\tstyles.colorCircle,\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\tbackgroundColor: preset.color ?? colors.primary,\n\t\t\t\t\t\t\t\t\t\tborderColor: active ? colors.onSurface : 'transparent',\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\tactive && styles.activeCircle,\n\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t{active && (\n\t\t\t\t\t\t\t\t\t<Icon\n\t\t\t\t\t\t\t\t\t\tname='check'\n\t\t\t\t\t\t\t\t\t\tsize={22}\n\t\t\t\t\t\t\t\t\t\tcolor={isDark ? '#FFFFFF' : '#000000'}\n\t\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t\t)}\n\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t\t<Text\n\t\t\t\t\t\t\t\tvariant='bodySmall'\n\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\tstyles.label,\n\t\t\t\t\t\t\t\t\tactive\n\t\t\t\t\t\t\t\t\t\t? [styles.activeLabel, { color: colors.primary }]\n\t\t\t\t\t\t\t\t\t\t: { color: colors.onSurfaceVariant },\n\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t{preset.label}\n\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t</Pressable>\n\t\t\t\t\t)\n\t\t\t\t})}\n\n\t\t\t\t{/* 自定义颜色选项 */}\n\t\t\t\t<Pressable\n\t\t\t\t\tstyle={styles.item}\n\t\t\t\t\tonPress={() => setPickerVisible(true)}\n\t\t\t\t\taccessibilityRole='button'\n\t\t\t\t\taccessibilityLabel='自定义主题色'\n\t\t\t\t>\n\t\t\t\t\t<View\n\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\tstyles.colorCircle,\n\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\tbackgroundColor: isCustomActive\n\t\t\t\t\t\t\t\t\t? themeColor\n\t\t\t\t\t\t\t\t\t: colors.surfaceVariant,\n\t\t\t\t\t\t\t\tborderColor: isCustomActive ? colors.onSurface : 'transparent',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\tisCustomActive && styles.activeCircle,\n\t\t\t\t\t\t]}\n\t\t\t\t\t>\n\t\t\t\t\t\t{isCustomActive ? (\n\t\t\t\t\t\t\t<Icon\n\t\t\t\t\t\t\t\tname='check'\n\t\t\t\t\t\t\t\tsize={22}\n\t\t\t\t\t\t\t\tcolor={\n\t\t\t\t\t\t\t\t\tthemeColor && Color(themeColor).isDark()\n\t\t\t\t\t\t\t\t\t\t? '#FFFFFF'\n\t\t\t\t\t\t\t\t\t\t: '#000000'\n\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t) : (\n\t\t\t\t\t\t\t<Icon\n\t\t\t\t\t\t\t\tname='palette-outline'\n\t\t\t\t\t\t\t\tsize={22}\n\t\t\t\t\t\t\t\tcolor={colors.onSurfaceVariant}\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t)}\n\t\t\t\t\t</View>\n\t\t\t\t\t<Text\n\t\t\t\t\t\tvariant='bodySmall'\n\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\tstyles.label,\n\t\t\t\t\t\t\tisCustomActive\n\t\t\t\t\t\t\t\t? [styles.activeLabel, { color: colors.primary }]\n\t\t\t\t\t\t\t\t: { color: colors.onSurfaceVariant },\n\t\t\t\t\t\t]}\n\t\t\t\t\t>\n\t\t\t\t\t\t自定义\n\t\t\t\t\t</Text>\n\t\t\t\t</Pressable>\n\t\t\t</ScrollView>\n\n\t\t\t<ThemeColorPickerModal\n\t\t\t\tvisible={pickerVisible}\n\t\t\t\tcurrentColor={isCustomActive ? themeColor : undefined}\n\t\t\t\tonDismiss={() => setPickerVisible(false)}\n\t\t\t\tonSelect={handleCustomColorSelected}\n\t\t\t/>\n\t\t</View>\n\t)\n}\n\nconst styles = StyleSheet.create({\n\tcontainer: {\n\t\tmarginTop: 8,\n\t\tmarginBottom: 8,\n\t},\n\tscrollContainer: {\n\t\tflexDirection: 'row',\n\t\talignItems: 'center',\n\t\tpaddingVertical: 8,\n\t\tpaddingRight: 16,\n\t\tgap: 16,\n\t},\n\titem: {\n\t\talignItems: 'center',\n\t\tjustifyContent: 'center',\n\t},\n\tcolorCircle: {\n\t\twidth: 44,\n\t\theight: 44,\n\t\tborderRadius: 22,\n\t\talignItems: 'center',\n\t\tjustifyContent: 'center',\n\t\tborderWidth: 2,\n\t},\n\tactiveCircle: {\n\t\tborderWidth: 2.5,\n\t\ttransform: [{ scale: 1.08 }],\n\t\televation: 3,\n\t\tshadowColor: '#000',\n\t\tshadowOffset: { width: 0, height: 2 },\n\t\tshadowOpacity: 0.25,\n\t\tshadowRadius: 3.84,\n\t},\n\tlabel: {\n\t\tmarginTop: 6,\n\t\ttextAlign: 'center',\n\t\tfontWeight: '500',\n\t},\n\tactiveLabel: {\n\t\tfontWeight: 'bold',\n\t},\n})\n", "utf8");
+            console.log("✅ 已写入 ThemeColorSection.tsx");
+          }
+
+          const appearancePagePath = "apps/mobile/src/app/settings/appearance/index.tsx";
+          if (fs.existsSync(appearancePagePath)) {
+            let appCode = fs.readFileSync(appearancePagePath, "utf8");
+            if (!appCode.includes("ThemeColorSection")) {
+              appCode = appCode.replace(
+                "import ThemeSection from '@/features/theme/ThemeSection'",
+                "import ThemeColorSection from '@/features/theme/ThemeColorSection'\nimport ThemeSection from '@/features/theme/ThemeSection'"
+              );
+              appCode = appCode.replace(
+                "<SettingsSectionTitle title='主题' />",
+                "<SettingsSectionTitle title='主题色' />\n\t\t\t\t<ThemeColorSection />\n\n\t\t\t\t<SettingsSectionTitle title='主题' />"
+              );
+              fs.writeFileSync(appearancePagePath, appCode, "utf8");
+              console.log("✅ 已在 appearance/index.tsx 中渲染主题色设置项");
             }
           }
 
