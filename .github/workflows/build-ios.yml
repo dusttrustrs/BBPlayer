@@ -531,7 +531,7 @@ jobs:
                 '      testID: "player-slider",',
                 "      style: [iosSliderStyles.container, style],",
                 "      onLayout: handleLayout,",
-                "      hitSlop: { top: 15, bottom: 15, left: 10, right: 10 },",
+                "      hitSlop: { top: 15, bottom: 15, left: 0, right: 0 },",
                 "      ...panResponder.panHandlers,",
                 "    },",
                 "    createElement(",
@@ -2635,18 +2635,39 @@ jobs:
           const playerSliderPath = "apps/mobile/src/features/player/components/main/PlayerSlider.tsx";
           if (fs.existsSync(playerSliderPath)) {
             let playerSlider = fs.readFileSync(playerSliderPath, "utf8");
+            if (!playerSlider.includes("useNavigation")) {
+              playerSlider = "import { useNavigation } from 'expo-router'\n" + playerSlider;
+            }
+            if (!playerSlider.includes("const navigation = useNavigation()")) {
+              playerSlider = playerSlider.replace(
+                "export function PlayerSlider({ onInteraction }: PlayerSliderProps = {}) {",
+                "export function PlayerSlider({ onInteraction }: PlayerSliderProps = {}) {\n\tconst navigation = useNavigation()"
+              );
+            }
             if (!playerSlider.includes("playerSliderDragging$")) {
               playerSlider = playerSlider.replace(
                 "import { seekWithinTrack } from '@/lib/player/seek'",
                 "import { seekWithinTrack } from '@/lib/player/seek'\nimport { playerSliderDragging$ } from '@/hooks/stores/playbackContextStore'"
               );
+            }
+            if (!playerSlider.includes("navigation.setOptions({ gestureEnabled: !dragging })")) {
               playerSlider = playerSlider.replace(
                 /isNativeDragging\.set\(dragging\)\s*if \(!dragging\) isScrubbing\.set\(false\)/,
-                "isNativeDragging.set(dragging)\n\t\t\tif (!dragging) isScrubbing.set(false)\n\t\t\tscheduleOnRN(() => {\n\t\t\t\tplayerSliderDragging$.set(dragging)\n\t\t\t})"
+                "isNativeDragging.set(dragging)\n\t\t\tif (!dragging) isScrubbing.set(false)\n\t\t\tscheduleOnRN(() => {\n\t\t\t\tplayerSliderDragging$.set(dragging)\n\t\t\t\ttry {\n\t\t\t\t\tnavigation.setOptions({ gestureEnabled: !dragging })\n\t\t\t\t} catch {}\n\t\t\t})"
               );
-              fs.writeFileSync(playerSliderPath, playerSlider, "utf8");
-              console.log("✅ 已在 PlayerSlider.tsx 中绑定 playerSliderDragging$ 联动");
+              playerSlider = playerSlider.replace(
+                "[isNativeDragging, isScrubbing],",
+                "[isNativeDragging, isScrubbing, navigation],"
+              );
             }
+            if (!playerSlider.includes('testID="player-slider"')) {
+              playerSlider = playerSlider.replace(
+                '<View style={podcast ? styles.podcastSliderRow : undefined}>',
+                '<View testID="player-slider" style={podcast ? styles.podcastSliderRow : undefined}>'
+              );
+            }
+            fs.writeFileSync(playerSliderPath, playerSlider, "utf8");
+            console.log("✅ 已在 PlayerSlider.tsx 中绑定 playerSliderDragging$ 与动态禁用返回手势");
           }
 
           const playerPagePath = "apps/mobile/src/app/player.tsx";
@@ -2734,6 +2755,36 @@ jobs:
                     "    }];",
                     "  }",
                     "}"
+                  ].join("\n")
+                );
+              }
+                            if (!stackMm.includes("loc.y > screenH - 300")) {
+                stackMm = stackMm.replace(
+                  "if (![topScreen isKindOfClass:[RNSScreenView class]] || !topScreen.gestureEnabled ||\n      _controller.viewControllers.count < 2 || [topScreen isModal]) {\n    return NO;\n  }",
+                  [
+                    "if (![topScreen isKindOfClass:[RNSScreenView class]] || !topScreen.gestureEnabled ||",
+                    "      _controller.viewControllers.count < 2 || [topScreen isModal]) {",
+                    "    return NO;",
+                    "  }",
+                    "",
+                    "  if ([event isKindOfClass:[UITouch class]]) {",
+                    "    UITouch *touch = (UITouch *)event;",
+                    "    CGPoint loc = [touch locationInView:_controller.view];",
+                    "    CGFloat screenH = _controller.view.bounds.size.height;",
+                    "    if (screenH > 0 && loc.y > screenH - 300) {",
+                    "      if (topScreen.stackAnimation == RNSScreenStackAnimationSlideFromBottom) {",
+                    "        return NO;",
+                    "      }",
+                    "      UIView *v = touch.view;",
+                    "      while (v != nil) {",
+                    "        if ([v.accessibilityIdentifier isEqualToString:@\"player-slider\"] ||",
+                    "            [v.accessibilityLabel isEqualToString:@\"player-slider\"]) {",
+                    "          return NO;",
+                    "        }",
+                    "        v = v.superview;",
+                    "      }",
+                    "    }",
+                    "  }"
                   ].join("\n")
                 );
               }
@@ -3087,10 +3138,7 @@ jobs:
               "                        ) ??",
               "                        (item.content.pictures[viewerIndex]?.img_src?.startsWith('//')",
               "                          ? `https:${item.content.pictures[viewerIndex]?.img_src}`",
-              "                          : item.content.pictures[viewerIndex]?.img_src?.replace(",
-              "                              /^http:/,",
-              "                              'https:'",
-              "                            )) ??",
+              "                          : item.content.pictures[viewerIndex]?.img_src?.replace(/^http:/, 'https:')) ??",
               "                        '',",
               "                      headers: { Referer: 'https://www.bilibili.com' },",
               "                    }}",
@@ -3132,7 +3180,7 @@ jobs:
               "                          : rawSrc?.replace(/^http:/, 'https:')) ??",
               "                        ''",
               "                      if (!targetUrl) return",
-
+              "",
               "                      try {",
               "                        setIsSaving(true)",
               "                        const permission =",
@@ -3148,7 +3196,18 @@ jobs:
               "                          fileUri,",
               "                          { headers: { Referer: 'https://www.bilibili.com' } },",
               "                        )",
-              "                        await MediaLibrary.saveToLibraryAsync(res.uri)",
+              "                        const mediaLibAny = MediaLibrary as unknown as {",
+              "                          Asset?: { create?: (uri: string) => Promise<unknown> }",
+              "                          createAssetAsync?: (uri: string) => Promise<unknown>",
+              "                          saveToLibraryAsync?: (uri: string) => Promise<unknown>",
+              "                        }",
+              "                        if (mediaLibAny.Asset && typeof mediaLibAny.Asset.create === 'function') {",
+              "                          await mediaLibAny.Asset.create(res.uri)",
+              "                        } else if (typeof mediaLibAny.createAssetAsync === 'function') {",
+              "                          await mediaLibAny.createAssetAsync(res.uri)",
+              "                        } else if (typeof mediaLibAny.saveToLibraryAsync === 'function') {",
+              "                          await mediaLibAny.saveToLibraryAsync(res.uri)",
+              "                        }",
               "                        toast.success('图片已成功保存到相册')",
               "                      } catch (err) {",
               "                        toastAndLogError(",
@@ -3173,19 +3232,19 @@ jobs:
             ].join("\n");
             commentCode = commentCode.replace(oldPicturesBlock, newPicturesBlock);
 
-            if (!commentCode.includes("viewerModalContainer")) {
+            if (!commentCode.includes("viewerImageContainer: {")) {
               const viewerStyles = [
                 "  viewerModalContainer: {",
                 "    flex: 1,",
-                "    backgroundColor: 'rgba(0, 0, 0, 0.95)',",
+                "    backgroundColor: '#000000',",
                 "    justifyContent: 'space-between',",
                 "  },",
                 "  viewerTopBar: {",
                 "    flexDirection: 'row',",
                 "    alignItems: 'center',",
                 "    justifyContent: 'space-between',",
-                "    paddingHorizontal: 8,",
-                "    paddingTop: 8,",
+                "    paddingHorizontal: 16,",
+                "    paddingTop: 12,",
                 "    zIndex: 10,",
                 "  },",
                 "  viewerPageIndicator: {",
@@ -3195,6 +3254,7 @@ jobs:
                 "  },",
                 "  viewerImageContainer: {",
                 "    flex: 1,",
+                "    width: '100%',",
                 "    justifyContent: 'center',",
                 "    alignItems: 'center',",
                 "    position: 'relative',",
@@ -3205,30 +3265,37 @@ jobs:
                 "  },",
                 "  viewerNavArrow: {",
                 "    position: 'absolute',",
-                "    zIndex: 10,",
-                "    backgroundColor: 'rgba(0, 0, 0, 0.4)',",
+                "    top: '50%',",
+                "    marginTop: -24,",
+                "    width: 48,",
+                "    height: 48,",
                 "    borderRadius: 24,",
+                "    backgroundColor: 'rgba(0, 0, 0, 0.5)',",
+                "    justifyContent: 'center',",
+                "    alignItems: 'center',",
+                "    zIndex: 20,",
                 "  },",
                 "  viewerBottomBar: {",
+                "    paddingBottom: 36,",
+                "    paddingTop: 16,",
                 "    alignItems: 'center',",
                 "    justifyContent: 'center',",
-                "    paddingBottom: 24,",
                 "    zIndex: 10,",
                 "  },",
                 "  downloadButton: {",
                 "    flexDirection: 'row',",
                 "    alignItems: 'center',",
                 "    justifyContent: 'center',",
-                "    backgroundColor: 'rgba(255, 255, 255, 0.22)',",
-                "    paddingHorizontal: 24,",
+                "    backgroundColor: 'rgba(255, 255, 255, 0.25)',",
                 "    paddingVertical: 12,",
-                "    borderRadius: 28,",
+                "    paddingHorizontal: 28,",
+                "    borderRadius: 24,",
                 "    gap: 8,",
                 "  },",
                 "  downloadButtonText: {",
                 "    color: '#ffffff',",
                 "    fontSize: 15,",
-                "    fontWeight: 'bold',",
+                "    fontWeight: '600',",
                 "  },"
               ].join("\n");
               commentCode = commentCode.replace("const styles = StyleSheet.create({", "const styles = StyleSheet.create({\n" + viewerStyles);
@@ -3736,6 +3803,141 @@ jobs:
               }
               fs.writeFileSync(localMenuPath, lmCode, "utf8");
               console.log("✅ 已在 useLocalPlaylistMenu.ts 中加入下载队列即时刷新与状态同步");
+            }
+          }
+
+          // 32. 为搜索结果与远程歌单二级菜单补充「下载」选项：
+          const searchInteractionsPath = "apps/mobile/src/features/playlist/remote/search-result/hooks/useSearchInteractions.ts";
+          if (fs.existsSync(searchInteractionsPath)) {
+            let siCode = fs.readFileSync(searchInteractionsPath, "utf8");
+            if (!siCode.includes("DOWNLOAD_ICON")) {
+              siCode = siCode.replace(
+                "import { Icon } from '@expo/ui'",
+                "import { Orpheus } from '@bbplayer/orpheus'\nimport { Icon } from '@expo/ui'"
+              );
+              siCode = siCode.replace(
+                "import { MULTIPAGE_VIDEO_KEYWORDS } from '@/features/playlist/remote/search-result/constants'",
+                "import { MULTIPAGE_VIDEO_KEYWORDS } from '@/features/playlist/remote/search-result/constants'\nimport { orpheusQueryKeys } from '@/hooks/queries/orpheus'\nimport { queryClient } from '@/lib/config/queryClient'"
+              );
+              siCode = siCode.replace(
+                "import { addToQueue } from '@/utils/player'",
+                "import { addToQueue, getInternalPlayUri } from '@/utils/player'"
+              );
+              siCode = siCode.replace(
+                "const ADD_TO_PLAYLIST_ICON = Icon.select({",
+                "const ADD_TO_PLAYLIST_ICON = Icon.select({\n\tios: 'plus.rectangle.on.rectangle',\n\tandroid: import('@expo/material-symbols/playlist_add.xml'),\n})\n\nconst DOWNLOAD_ICON = Icon.select({\n\tios: 'arrow.down.circle',\n\tandroid: import('@expo/material-symbols/download.xml'),\n})"
+              );
+              const downloadHandlerBlock = [
+                "  const handleDownload = useCallback(async (item: BilibiliTrack) => {",
+                "    try {",
+                "      await syncFacade.addTrackToLocal(item)",
+                "      const url = getInternalPlayUri(item)",
+                "      if (!url) {",
+                "        toastAndLogError('获取内部播放地址失败', '失败了！', 'UI.Playlist.Remote')",
+                "        return",
+                "      }",
+                "      await Orpheus.downloadTrack({",
+                "        id: item.uniqueKey,",
+                "        url: url,",
+                "        title: item.title,",
+                "        artist: item.artist?.name,",
+                "        artwork: item.coverUrl ?? undefined,",
+                "        duration: item.duration,",
+                "      })",
+                "      void queryClient.invalidateQueries({",
+                "        queryKey: orpheusQueryKeys.downloadTasks(),",
+                "      })",
+                "      void queryClient.invalidateQueries({",
+                "        queryKey: orpheusQueryKeys.batchDownloadStatus([item.uniqueKey]),",
+                "      })",
+                "      toast.success('已添加到下载队列')",
+                "    } catch (error) {",
+                "      toastAndLogError('下载音频失败', error, 'UI.Playlist.Remote')",
+                "    }",
+                "  }, [])\n"
+              ].join("\n");
+              siCode = siCode.replace(
+                "const trackMenuItems = useCallback(",
+                downloadHandlerBlock + "\n\tconst trackMenuItems = useCallback("
+              );
+              const targetMenuItem = "title: '添加到本地歌单',\n\t\t\t\tleadingIcon: ADD_TO_PLAYLIST_ICON,\n\t\t\t\tonPress: () => {\n\t\t\t\t\topenModal('UpdateTrackLocalPlaylists', { track: item })\n\t\t\t\t},\n\t\t\t},";
+              siCode = siCode.replace(
+                targetMenuItem,
+                targetMenuItem + "\n\t\t\t{\n\t\t\t\ttitle: '下载',\n\t\t\t\tleadingIcon: DOWNLOAD_ICON,\n\t\t\t\tonPress: () => handleDownload(item),\n\t\t\t},"
+              );
+              siCode = siCode.replace(
+                "[router, openModal, playTrack],",
+                "[router, openModal, playTrack, handleDownload],"
+              );
+              fs.writeFileSync(searchInteractionsPath, siCode, "utf8");
+              console.log("✅ 已在 useSearchInteractions.ts 中为搜索结果二级菜单添加下载选项");
+            }
+          }
+
+          const remotePlaylistMenuPath = "apps/mobile/src/features/playlist/remote/hooks/usePlaylistMenu.ts";
+          if (fs.existsSync(remotePlaylistMenuPath)) {
+            let pmCode = fs.readFileSync(remotePlaylistMenuPath, "utf8");
+            if (!pmCode.includes("DOWNLOAD_ICON")) {
+              pmCode = pmCode.replace(
+                "import { Icon } from '@expo/ui'",
+                "import { Orpheus } from '@bbplayer/orpheus'\nimport { Icon } from '@expo/ui'"
+              );
+              pmCode = pmCode.replace(
+                "import { useModalStore } from '@/hooks/stores/useModalStore'",
+                "import { orpheusQueryKeys } from '@/hooks/queries/orpheus'\nimport { useModalStore } from '@/hooks/stores/useModalStore'\nimport { queryClient } from '@/lib/config/queryClient'\nimport { syncFacade } from '@/lib/facades/syncBilibiliPlaylist'"
+              );
+              pmCode = pmCode.replace(
+                "import toast from '@/utils/toast'",
+                "import { toastAndLogError } from '@/utils/error-handling'\nimport { getInternalPlayUri } from '@/utils/player'\nimport toast from '@/utils/toast'"
+              );
+              pmCode = pmCode.replace(
+                "const ADD_TO_PLAYLIST_ICON = Icon.select({",
+                "const ADD_TO_PLAYLIST_ICON = Icon.select({\n\tios: 'plus.rectangle.on.rectangle',\n\tandroid: import('@expo/material-symbols/playlist_add.xml'),\n})\n\nconst DOWNLOAD_ICON = Icon.select({\n\tios: 'arrow.down.circle',\n\tandroid: import('@expo/material-symbols/download.xml'),\n})"
+              );
+              const downloadHandlerBlock = [
+                "  const handleDownload = useCallback(async (item: BilibiliTrack) => {",
+                "    try {",
+                "      await syncFacade.addTrackToLocal(item)",
+                "      const url = getInternalPlayUri(item)",
+                "      if (!url) {",
+                "        toastAndLogError('获取内部播放地址失败', '失败了！', 'UI.Playlist.Remote')",
+                "        return",
+                "      }",
+                "      await Orpheus.downloadTrack({",
+                "        id: item.uniqueKey,",
+                "        url: url,",
+                "        title: item.title,",
+                "        artist: item.artist?.name,",
+                "        artwork: item.coverUrl ?? undefined,",
+                "        duration: item.duration,",
+                "      })",
+                "      void queryClient.invalidateQueries({",
+                "        queryKey: orpheusQueryKeys.downloadTasks(),",
+                "      })",
+                "      void queryClient.invalidateQueries({",
+                "        queryKey: orpheusQueryKeys.batchDownloadStatus([item.uniqueKey]),",
+                "      })",
+                "      toast.success('已添加到下载队列')",
+                "    } catch (error) {",
+                "      toastAndLogError('下载音频失败', error, 'UI.Playlist.Remote')",
+                "    }",
+                "  }, [])\n"
+              ].join("\n");
+              pmCode = pmCode.replace(
+                "return useCallback(",
+                downloadHandlerBlock + "\n\treturn useCallback("
+              );
+              const targetMenuItem = "title: '添加到本地歌单',\n\t\t\t\tleadingIcon: ADD_TO_PLAYLIST_ICON,\n\t\t\t\tonPress: () => {\n\t\t\t\t\topenModal('UpdateTrackLocalPlaylists', { track: item })\n\t\t\t\t},\n\t\t\t},";
+              pmCode = pmCode.replace(
+                targetMenuItem,
+                targetMenuItem + "\n\t\t\t{\n\t\t\t\ttitle: '下载',\n\t\t\t\tleadingIcon: DOWNLOAD_ICON,\n\t\t\t\tonPress: () => handleDownload(item),\n\t\t\t},"
+              );
+              pmCode = pmCode.replace(
+                "[router, openModal, playTrack, pathname],",
+                "[router, openModal, playTrack, pathname, handleDownload],"
+              );
+              fs.writeFileSync(remotePlaylistMenuPath, pmCode, "utf8");
+              console.log("✅ 已在 usePlaylistMenu.ts 中为远程歌单二级菜单添加下载选项");
             }
           }
 
