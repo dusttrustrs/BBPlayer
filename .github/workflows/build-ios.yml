@@ -2211,9 +2211,7 @@ jobs:
               ].join("\n");
               storageCode = storageCode.replace(
                 /<SettingsSectionTitle[\s\S]*?title=['"]下载['"][\s\S]*?\/>/,
-                "console.log("✅ 已在 settings/playback.tsx 中添加控制中心联动与单曲点击直接播放设置项");
-            }
-          }\n" + switchRow
+                (m) => m + "\n" + switchRow
               );
               fs.writeFileSync(storageSettingsPath, storageCode, "utf8");
               console.log("✅ 已在 storage.tsx 中添加仅下载音频文件开关");
@@ -3499,12 +3497,6 @@ jobs:
             }
             fs.writeFileSync(commentItemPath, commentCode, "utf8");
             console.log("✅ 已在 CommentItem.tsx 中实现评论区图片手势切换、双指缩放与保存图片");
-          }"
-              ].join("\n");
-              dlCode = dlCode.replace(targetMove, moveReplacement);
-              fs.writeFileSync(downloadMgrPath, dlCode, "utf8");
-              console.log("✅ 已在 OrpheusDownloadManager.swift 中实现下载音频自动同步到 Music 目录");
-            }
           }
 
           // 34. 支持仅下载音频选项（去除画面以大幅缩减体积）并联动 ExpoOrpheusModule / BilibiliApi：
