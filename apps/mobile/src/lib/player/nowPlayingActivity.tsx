@@ -138,7 +138,7 @@ const NowPlayingActivity = (props: NowPlayingActivityProps) => {
 				spacing={6}
 				modifiers={[
 					padding({ all: 16 }),
-					activityBackgroundTint('#000000A6'),
+					activityBackgroundTint('#1C1C1E'),
 					widgetURL('bbplayer://'),
 				]}
 			>
