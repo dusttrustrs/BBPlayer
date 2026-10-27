@@ -2563,7 +2563,7 @@ jobs:
             }
             if (!layoutCode.includes("HIDDEN_SEGMENT_ROOTS.has(routeNameToSegmentRoot(route.name)))")) {
               layoutCode = layoutCode.replace(
-                /focus:\s*\(\)\s*=>\s*\{[\s\S]*?nowPlayingBarStore\$\.hiddenScreenActive\.set\(true\)[\s\S]*?\}/,
+                /focus:\s*\(\)\s*=>\s*\{[\s\S]*?nowPlayingBarStore\$\.hiddenScreenActive\.set\(true\)\s*\}\s*\}/,
                 [
                   "focus: () => {",
                   "  if (route.name !== 'modal') {",
