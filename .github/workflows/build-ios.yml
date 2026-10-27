@@ -361,6 +361,9 @@ jobs:
               const iosBlock = [
                 "ios: {",
                 "      infoPlist: {",
+                "        NSAppTransportSecurity: {",
+                "          NSAllowsArbitraryLoads: true,",
+                "        },",
                 "        UIAppFonts: ['MaterialDesignIcons.ttf'],",
                 "        UIFileSharingEnabled: true,\n        LSSupportsOpeningDocumentsInPlace: true,",
                 "        ExpoShareIntoAppGroupId: 'group.com.roitium.bbplayer',",
@@ -370,12 +373,15 @@ jobs:
               ].join("\n");
               cfg = cfg.replace(iosPattern, iosBlock);
             }
+            if (cfg.includes("infoPlist:") && !cfg.includes("NSAppTransportSecurity")) {
+              cfg = cfg.replace("infoPlist: {", "infoPlist: {\n        NSAppTransportSecurity: {\n          NSAllowsArbitraryLoads: true,\n        },");
+            }
             if (cfg.includes("useFrameworks: 'static'") && !cfg.includes("enableSceneSupport: true")) {
               cfg = cfg.replace("useFrameworks: 'static'", "useFrameworks: 'static',\n\t\t\t\t\tenableSceneSupport: true");
               console.log("✅ 已向 app.config.ts 注入 enableSceneSupport: true (启用 UIScene 生命周期支持)");
             }
             fs.writeFileSync(configPath, cfg, "utf8");
-            console.log("✅ 已向 app.config.ts 注入 UIAppFonts, ExpoShareIntoAppGroupId 与 UIBackgroundModes(audio)");
+            console.log("✅ 已向 app.config.ts 注入 NSAppTransportSecurity, UIAppFonts, ExpoShareIntoAppGroupId 与 UIBackgroundModes(audio)");
           }
 
           // 3. 修复 WavySlider 在 iOS 端的平滑拖动与原生触控 (彻底消除卡顿、跳跃与回弹)：
@@ -3154,23 +3160,30 @@ jobs:
                 "      'worklet'",
                 "      if (!e.scale || e.scale <= 0) return",
                 "      const targetScale = startScale.value * e.scale",
-                "      scale.value = Math.max(0.75, Math.min(targetScale, 5.5))",
+                "      scale.value = Math.max(0.8, Math.min(targetScale, 5))",
                 "    })",
                 "    .onEnd(() => {",
                 "      'worklet'",
                 "      isPinching.value = false",
                 "      if (scale.value < 1.05) {",
-                "        scale.value = withSpring(1, { damping: 18, stiffness: 120 })",
-                "        translateX.value = withSpring(0, { damping: 18, stiffness: 120 })",
-                "        translateY.value = withSpring(0, { damping: 18, stiffness: 120 })",
+                "        scale.value = withTiming(1, { duration: 150 })",
+                "        translateX.value = withTiming(0, { duration: 150 })",
+                "        translateY.value = withTiming(0, { duration: 150 })",
                 "        startScale.value = 1",
                 "        startTranslateX.value = 0",
                 "        startTranslateY.value = 0",
-                "      } else if (scale.value > 4) {",
-                "        scale.value = withSpring(4, { damping: 18, stiffness: 120 })",
-                "        startScale.value = 4",
                 "      } else {",
-                "        startScale.value = scale.value",
+                "        const finalScale = Math.min(scale.value, 5)",
+                "        scale.value = finalScale",
+                "        startScale.value = finalScale",
+                "        const maxPanX = Math.max(0, (finalScale - 1) * (windowWidth * 0.5))",
+                "        const maxPanY = Math.max(0, (finalScale - 1) * (windowHeight * 0.5))",
+                "        const clampedX = Math.max(-maxPanX, Math.min(translateX.value, maxPanX))",
+                "        const clampedY = Math.max(-maxPanY, Math.min(translateY.value, maxPanY))",
+                "        translateX.value = clampedX",
+                "        translateY.value = clampedY",
+                "        startTranslateX.value = clampedX",
+                "        startTranslateY.value = clampedY",
                 "      }",
                 "    })",
                 "",
@@ -3185,8 +3198,12 @@ jobs:
                 "      'worklet'",
                 "      if (isPinching.value) return",
                 "      if (scale.value > 1.05) {",
-                "        translateX.value = startTranslateX.value + e.translationX",
-                "        translateY.value = startTranslateY.value + e.translationY",
+                "        const maxPanX = Math.max(0, (scale.value - 1) * (windowWidth * 0.5))",
+                "        const maxPanY = Math.max(0, (scale.value - 1) * (windowHeight * 0.5))",
+                "        const nextX = startTranslateX.value + e.translationX",
+                "        const nextY = startTranslateY.value + e.translationY",
+                "        translateX.value = Math.max(-maxPanX, Math.min(nextX, maxPanX))",
+                "        translateY.value = Math.max(-maxPanY, Math.min(nextY, maxPanY))",
                 "      } else {",
                 "        translateX.value = e.translationX",
                 "      }",
@@ -3195,12 +3212,12 @@ jobs:
                 "      'worklet'",
                 "      if (isPinching.value) return",
                 "      if (scale.value > 1.05) {",
-                "        const maxPanX = Math.max(0, (scale.value - 1) * (windowWidth * 0.5) + 30)",
-                "        const maxPanY = Math.max(0, (scale.value - 1) * (windowHeight * 0.5) + 50)",
+                "        const maxPanX = Math.max(0, (scale.value - 1) * (windowWidth * 0.5))",
+                "        const maxPanY = Math.max(0, (scale.value - 1) * (windowHeight * 0.5))",
                 "        const clampedX = Math.max(-maxPanX, Math.min(translateX.value, maxPanX))",
                 "        const clampedY = Math.max(-maxPanY, Math.min(translateY.value, maxPanY))",
-                "        translateX.value = withSpring(clampedX, { damping: 18, stiffness: 120 })",
-                "        translateY.value = withSpring(clampedY, { damping: 18, stiffness: 120 })",
+                "        translateX.value = clampedX",
+                "        translateY.value = clampedY",
                 "        startTranslateX.value = clampedX",
                 "        startTranslateY.value = clampedY",
                 "      } else {",
@@ -3221,8 +3238,8 @@ jobs:
                 "            return",
                 "          }",
                 "        }",
-                "        translateX.value = withSpring(0, { damping: 18, stiffness: 120 })",
-                "        translateY.value = withSpring(0, { damping: 18, stiffness: 120 })",
+                "        translateX.value = withTiming(0, { duration: 150 })",
+                "        translateY.value = withTiming(0, { duration: 150 })",
                 "        startTranslateX.value = 0",
                 "        startTranslateY.value = 0",
                 "      }",
@@ -3233,14 +3250,14 @@ jobs:
                 "    .onEnd(() => {",
                 "      'worklet'",
                 "      if (scale.value > 1.2) {",
-                "        scale.value = withSpring(1, { damping: 18, stiffness: 120 })",
-                "        translateX.value = withSpring(0, { damping: 18, stiffness: 120 })",
-                "        translateY.value = withSpring(0, { damping: 18, stiffness: 120 })",
+                "        scale.value = withTiming(1, { duration: 200 })",
+                "        translateX.value = withTiming(0, { duration: 200 })",
+                "        translateY.value = withTiming(0, { duration: 200 })",
                 "        startScale.value = 1",
                 "        startTranslateX.value = 0",
                 "        startTranslateY.value = 0",
                 "      } else {",
-                "        scale.value = withSpring(2.5, { damping: 18, stiffness: 120 })",
+                "        scale.value = withTiming(2.5, { duration: 200 })",
                 "        startScale.value = 2.5",
                 "      }",
                 "    })",
@@ -3515,6 +3532,12 @@ jobs:
           const biliApiSwiftPath = "packages/orpheus/ios/BilibiliApi.swift";
           if (fs.existsSync(biliApiSwiftPath)) {
             let biliCode = fs.readFileSync(biliApiSwiftPath, "utf8");
+            if (!biliCode.includes("let bandwidth: Int?")) {
+              biliCode = biliCode.replace(
+                "let backupUrl: [String]?",
+                "let backupUrl: [String]?\n        let bandwidth: Int?"
+              );
+            }
             if (!biliCode.includes("audioOnly: Bool = false")) {
               biliCode = biliCode.replace(
                 "func getPlayUrl(bvid: String, cid: String, completion: @escaping (Result<String, Error>) -> Void)",
@@ -3524,46 +3547,149 @@ jobs:
                 "self.getPlayUrl(bvid: bvid, cid: cid, completion: completion)",
                 "self.getPlayUrl(bvid: bvid, cid: cid, audioOnly: audioOnly, completion: completion)"
               );
+            }
+            if (biliCode.includes('"platform": PlatformHtml5')) {
               biliCode = biliCode.replace(
-                /\"fnval\":\s*FnvalMp4,/,
-                "\"fnval\": audioOnly ? (BiliFnvalDash | 4048) : FnvalMp4,"
-              );
-              biliCode = biliCode.replace(
-                /if let audioUrl = playUrlResponse\.data\?\.dash\?\.audio\?\.first\?\.baseUrl[\s\S]*?completion\(\.failure\(BilibiliError\.decodingFailed\)\)\s*\}/,
+                /let params: \[String: Any\] = \[[\s\S]*?\"platform\": PlatformHtml5\s*\]/,
                 [
-                  "if audioOnly {",
-                  "                    if let audioUrl = playUrlResponse.data?.dash?.audio?.first?.baseUrl {",
-                  "                        completion(.success(audioUrl))",
-                  "                    } else if let mp4Url = playUrlResponse.data?.durl?.first?.url {",
-                  "                        completion(.success(mp4Url))",
-                  "                    } else {",
-                  "                        completion(.failure(BilibiliError.decodingFailed))",
-                  "                    }",
-                  "                } else {",
-                  "                    if let mp4Url = playUrlResponse.data?.durl?.first?.url {",
-                  "                        completion(.success(mp4Url))",
-                  "                    } else if let audioUrl = playUrlResponse.data?.dash?.audio?.first?.baseUrl {",
-                  "                        completion(.success(audioUrl))",
-                  "                    } else {",
-                  "                        completion(.failure(BilibiliError.decodingFailed))",
-                  "                    }",
-                  "                }"
+                  "var params: [String: Any] = [",
+                  "            \"bvid\": bvid,",
+                  "            \"cid\": cid,",
+                  "            \"qn\": BiliQualityHigh,",
+                  "            // fnval=1 requests MP4/FLV durl list which is better for AVPlayer",
+                  "            \"fnval\": audioOnly ? (BiliFnvalDash | 4048) : FnvalMp4,",
+                  "            \"fnver\": FnverDefault,",
+                  "            \"fourk\": FourKEnabled,",
+                  "        ]",
+                  "        if !audioOnly {",
+                  "            params[\"platform\"] = PlatformHtml5",
+                  "        }"
                 ].join("\n")
               );
-              fs.writeFileSync(biliApiSwiftPath, biliCode, "utf8");
-              console.log("✅ 已在 BilibiliApi.swift 中支持 audioOnly DASH 音频流请求");
             }
+            biliCode = biliCode.replace(
+              /if let audioUrl = playUrlResponse\.data\?\.dash\?\.audio\?\.first\?\.baseUrl[\s\S]*?completion\(\.failure\(BilibiliError\.decodingFailed\)\)\s*\}/,
+              [
+                "if audioOnly {",
+                "                    if let audios = playUrlResponse.data?.dash?.audio, !audios.isEmpty {",
+                "                        let bestAudio = audios.max(by: { ($0.bandwidth ?? $0.id) < ($1.bandwidth ?? $1.id) }) ?? audios[0]",
+                "                        completion(.success(bestAudio.baseUrl))",
+                "                    } else if let mp4Url = playUrlResponse.data?.durl?.first?.url {",
+                "                        completion(.success(mp4Url))",
+                "                    } else {",
+                "                        completion(.failure(BilibiliError.decodingFailed))",
+                "                    }",
+                "                } else {",
+                "                    if let mp4Url = playUrlResponse.data?.durl?.first?.url {",
+                "                        completion(.success(mp4Url))",
+                "                    } else if let audioUrl = playUrlResponse.data?.dash?.audio?.first?.baseUrl {",
+                "                        completion(.success(audioUrl))",
+                "                    } else {",
+                "                        completion(.failure(BilibiliError.decodingFailed))",
+                "                    }",
+                "                }"
+              ].join("\n")
+            );
+            fs.writeFileSync(biliApiSwiftPath, biliCode, "utf8");
+            console.log("✅ 已在 BilibiliApi.swift 中支持 audioOnly DASH 纯音频流请求与最高音质选择");
           }
-          // 26. 增强下载音频文件在 iOS 系统「文件」App 中的可见性：
+          // 26. 增强下载音频管理：纯音频分离与「文件」App Documents/Music 目录同步
           const downloadMgrPath = "packages/orpheus/ios/OrpheusDownloadManager.swift";
           if (fs.existsSync(downloadMgrPath)) {
             let dlCode = fs.readFileSync(downloadMgrPath, "utf8");
-            const targetMove = "try fileManager.moveItem(at: location, to: dest)";
-            if (dlCode.includes(targetMove) && !dlCode.includes("musicDir.appendingPathComponent")) {
-              const moveReplacement = [
-                "try fileManager.moveItem(at: location, to: dest)",
+            if (!dlCode.includes("import AVFoundation")) {
+              dlCode = dlCode.replace("import Foundation", "import Foundation\nimport AVFoundation");
+            }
+            if (!dlCode.includes("downloadAudioOnly")) {
+              dlCode = dlCode.replace(
+                "private var trackMap: [String: Track] = [:] // Map ID to Track metadata",
+                "private var trackMap: [String: Track] = [:] // Map ID to Track metadata\n    private var downloadAudioOnly: Bool = true\n    \n    func setDownloadAudioOnly(_ audioOnly: Bool) {\n        stateQueue.sync {\n            self.downloadAudioOnly = audioOnly\n        }\n    }"
+              );
+              dlCode = dlCode.replace(
+                "BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid) { [weak self] result in",
+                "let isAudioOnly = stateQueue.sync { self.downloadAudioOnly }\n        BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid, audioOnly: isAudioOnly) { [weak self] result in"
+              );
+            }
+            if (!dlCode.includes("rawDest")) {
+              const targetUrlSessionPattern = /let dest = downloadsDir\.appendingPathComponent\("\\\(id\)\.mp4"\)[\s\S]*?(?:try\? fileManager\.copyItem\(at: dest, to: musicDest\)\s*\}|try fileManager\.moveItem\(at: location, to: dest\))/;
+              const fullReplacement = [
+                "// Use mp4 for internal storage consistency",
+                "            let dest = downloadsDir.appendingPathComponent(\"\\(id).mp4\")",
                 "            ",
-                "            // 同时在 Documents/Music 中为文件 App 维护可读命名的音频副本",
+                "            // Move location immediately to a temporary file with .mp4 extension so AVFoundation can inspect it",
+                "            let rawDest = downloadsDir.appendingPathComponent(\"\\(id)_raw.mp4\")",
+                "            if fileManager.fileExists(atPath: rawDest.path) {",
+                "                try? fileManager.removeItem(at: rawDest)",
+                "            }",
+                "            try fileManager.moveItem(at: location, to: rawDest)",
+                "            ",
+                "            let isAudioOnly = stateQueue.sync { self.downloadAudioOnly }",
+                "            if isAudioOnly {",
+                "                let asset = AVURLAsset(url: rawDest)",
+                "                let videoTracks = asset.tracks(withMediaType: .video)",
+                "                let audioTracks = asset.tracks(withMediaType: .audio)",
+                "                ",
+                "                if !videoTracks.isEmpty && !audioTracks.isEmpty {",
+                "                    // Video tracks present: extract pure audio track via AVMutableComposition",
+                "                    let composition = AVMutableComposition()",
+                "                    if let compositionAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid),",
+                "                       let sourceAudioTrack = audioTracks.first {",
+                "                        let timeRange = CMTimeRange(start: .zero, duration: asset.duration)",
+                "                        try? compositionAudioTrack.insertTimeRange(timeRange, of: sourceAudioTrack, at: .zero)",
+                "                        ",
+                "                        let exportDest = downloadsDir.appendingPathComponent(\"\\(id)_export.m4a\")",
+                "                        if fileManager.fileExists(atPath: exportDest.path) {",
+                "                            try? fileManager.removeItem(at: exportDest)",
+                "                        }",
+                "                        ",
+                "                        if let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) {",
+                "                            exportSession.outputURL = exportDest",
+                "                            exportSession.outputFileType = .m4a",
+                "                            let semaphore = DispatchSemaphore(value: 0)",
+                "                            exportSession.exportAsynchronously {",
+                "                                semaphore.signal()",
+                "                            }",
+                "                            _ = semaphore.wait(timeout: .now() + 30)",
+                "                            ",
+                "                            if exportSession.status == .completed && fileManager.fileExists(atPath: exportDest.path) {",
+                "                                if fileManager.fileExists(atPath: dest.path) {",
+                "                                    try? fileManager.removeItem(at: dest)",
+                "                                }",
+                "                                try fileManager.moveItem(at: exportDest, to: dest)",
+                "                                try? fileManager.removeItem(at: rawDest)",
+                "                            } else {",
+                "                                if fileManager.fileExists(atPath: dest.path) {",
+                "                                    try? fileManager.removeItem(at: dest)",
+                "                                }",
+                "                                try fileManager.moveItem(at: rawDest, to: dest)",
+                "                            }",
+                "                        } else {",
+                "                            if fileManager.fileExists(atPath: dest.path) {",
+                "                                try? fileManager.removeItem(at: dest)",
+                "                            }",
+                "                            try fileManager.moveItem(at: rawDest, to: dest)",
+                "                        }",
+                "                    } else {",
+                "                        if fileManager.fileExists(atPath: dest.path) {",
+                "                            try? fileManager.removeItem(at: dest)",
+                "                        }",
+                "                        try fileManager.moveItem(at: rawDest, to: dest)",
+                "                    }",
+                "                } else {",
+                "                    // Pure audio stream already (no video tracks), move directly to dest",
+                "                    if fileManager.fileExists(atPath: dest.path) {",
+                "                        try? fileManager.removeItem(at: dest)",
+                "                    }",
+                "                    try fileManager.moveItem(at: rawDest, to: dest)",
+                "                }",
+                "            } else {",
+                "                if fileManager.fileExists(atPath: dest.path) {",
+                "                    try? fileManager.removeItem(at: dest)",
+                "                }",
+                "                try fileManager.moveItem(at: rawDest, to: dest)",
+                "            }",
+                "            ",
+                "            // Also maintain user-accessible file in Documents/Music for Files App",
                 "            let musicDir = docs.appendingPathComponent(\"Music\")",
                 "            try? fileManager.createDirectory(at: musicDir, withIntermediateDirectories: true)",
                 "            if let t = trackMap[id] {",
@@ -3575,28 +3701,9 @@ jobs:
                 "                try? fileManager.copyItem(at: dest, to: musicDest)",
                 "            }"
               ].join("\n");
-              dlCode = dlCode.replace(targetMove, moveReplacement);
+              dlCode = dlCode.replace(targetUrlSessionPattern, fullReplacement);
               fs.writeFileSync(downloadMgrPath, dlCode, "utf8");
-              console.log("✅ 已在 OrpheusDownloadManager.swift 中实现下载音频自动同步到 Music 目录");
-            }
-          }
-
-          if (fs.existsSync(downloadMgrPath)) {
-            let dlCode = fs.readFileSync(downloadMgrPath, "utf8");
-            if (!dlCode.includes("setDownloadAudioOnly")) {
-              if (!dlCode.includes("import AVFoundation")) {
-                dlCode = dlCode.replace("import Foundation", "import Foundation\nimport AVFoundation");
-              }
-              dlCode = dlCode.replace(
-                "private var trackMap: [String: Track] = [:] // Map ID to Track metadata",
-                "private var trackMap: [String: Track] = [:] // Map ID to Track metadata\n    private var downloadAudioOnly: Bool = true\n    \n    func setDownloadAudioOnly(_ audioOnly: Bool) {\n        stateQueue.sync {\n            self.downloadAudioOnly = audioOnly\n        }\n    }"
-              );
-              dlCode = dlCode.replace(
-                "BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid) { [weak self] result in",
-                "let isAudioOnly = stateQueue.sync { self.downloadAudioOnly }\n        BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid, audioOnly: isAudioOnly) { [weak self] result in"
-              );
-              fs.writeFileSync(downloadMgrPath, dlCode, "utf8");
-              console.log("✅ 已在 OrpheusDownloadManager.swift 中适配仅下载音频与视频轨道剥离");
+              console.log("✅ 已在 OrpheusDownloadManager.swift 中实现纯音频处理与 Music 目录同步");
             }
           }
 
@@ -4343,6 +4450,39 @@ jobs:
             }
           }
 
+          // 35. 修复歌词搜索 Kugou ATS (NSURLErrorDomain -1022) 报错与静默降级：
+          const kugouApiPath = "apps/mobile/src/lib/api/kugou/api.ts";
+          if (fs.existsSync(kugouApiPath)) {
+            let kgCode = fs.readFileSync(kugouApiPath, "utf8");
+            kgCode = kgCode.replace(
+              "http://mobilecdn.kugou.com/api/v3/search/song",
+              "https://msearch.kugou.com/api/v3/search/song"
+            );
+            kgCode = kgCode.replace(
+              "http://krcs.kugou.com/search",
+              "https://krcs.kugou.com/search"
+            );
+            kgCode = kgCode.replace(
+              "http://lyrics.kugou.com/download",
+              "https://lyrics.kugou.com/download"
+            );
+            fs.writeFileSync(kugouApiPath, kgCode, "utf8");
+            console.log("✅ 已将 KugouApi 歌词与歌曲搜索接口升级为 HTTPS");
+          }
+
+          const lyricsSearchPath = "apps/mobile/src/hooks/queries/lyrics/index.ts";
+          if (fs.existsSync(lyricsSearchPath)) {
+            let lyricCode = fs.readFileSync(lyricsSearchPath, "utf8");
+            if (!lyricCode.includes("silent: true")) {
+              lyricCode = lyricCode.replace(
+                /(\s*enabled: !!searchQuery,)/g,
+                "$1\n        meta: { silent: true },"
+              );
+              fs.writeFileSync(lyricsSearchPath, lyricCode, "utf8");
+              console.log("✅ 已为 manualSearch 歌词查询添加 meta: { silent: true } 防护");
+            }
+          }
+
           EOF
 
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
@@ -4398,6 +4538,11 @@ jobs:
           if (plistPath) {
             console.log("🔍 检查生成的 Info.plist:", plistPath);
             let content = fs.readFileSync(plistPath, "utf8");
+            if (!content.includes("NSAppTransportSecurity")) {
+              execSync(`/usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "${plistPath}" 2>/dev/null || true`);
+              execSync(`/usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "${plistPath}" 2>/dev/null || true`);
+              console.log("✅ PlistBuddy: 已追加 NSAppTransportSecurity (NSAllowsArbitraryLoads=true)");
+            }
             if (!content.includes("MaterialDesignIcons.ttf")) {
               execSync(`/usr/libexec/PlistBuddy -c "Add :UIAppFonts array" "${plistPath}" 2>/dev/null || true`);
               execSync(`/usr/libexec/PlistBuddy -c "Add :UIAppFonts:0 string MaterialDesignIcons.ttf" "${plistPath}" 2>/dev/null || true`);
