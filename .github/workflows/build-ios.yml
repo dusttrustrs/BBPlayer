@@ -3825,7 +3825,7 @@ jobs:
               );
               siCode = siCode.replace(
                 "const ADD_TO_PLAYLIST_ICON = Icon.select({",
-                "const ADD_TO_PLAYLIST_ICON = Icon.select({\n\tios: 'plus.rectangle.on.rectangle',\n\tandroid: import('@expo/material-symbols/playlist_add.xml'),\n})\n\nconst DOWNLOAD_ICON = Icon.select({\n\tios: 'arrow.down.circle',\n\tandroid: import('@expo/material-symbols/download.xml'),\n})"
+                "const DOWNLOAD_ICON = Icon.select({\n\tios: 'arrow.down.circle',\n\tandroid: import('@expo/material-symbols/download.xml'),\n})\n\nconst ADD_TO_PLAYLIST_ICON = Icon.select({"
               );
               const downloadHandlerBlock = [
                 "  const handleDownload = useCallback(async (item: BilibiliTrack) => {",
@@ -3892,7 +3892,7 @@ jobs:
               );
               pmCode = pmCode.replace(
                 "const ADD_TO_PLAYLIST_ICON = Icon.select({",
-                "const ADD_TO_PLAYLIST_ICON = Icon.select({\n\tios: 'plus.rectangle.on.rectangle',\n\tandroid: import('@expo/material-symbols/playlist_add.xml'),\n})\n\nconst DOWNLOAD_ICON = Icon.select({\n\tios: 'arrow.down.circle',\n\tandroid: import('@expo/material-symbols/download.xml'),\n})"
+                "const DOWNLOAD_ICON = Icon.select({\n\tios: 'arrow.down.circle',\n\tandroid: import('@expo/material-symbols/download.xml'),\n})\n\nconst ADD_TO_PLAYLIST_ICON = Icon.select({"
               );
               const downloadHandlerBlock = [
                 "  const handleDownload = useCallback(async (item: BilibiliTrack) => {",
