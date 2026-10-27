@@ -3899,7 +3899,8 @@ jobs:
                 "        ",
                 "        guard let bvid = bvid, let cid = cid else { return }",
                 "        ",
-                "        BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid) { [weak self] result in",
+                "        let isAudioOnly = stateQueue.sync { self.downloadAudioOnly }",
+                "        BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid, audioOnly: isAudioOnly) { [weak self] result in",
                 "            DispatchQueue.main.async {",
                 "                switch result {",
                 "                case .success(let realUrl):",
@@ -4006,7 +4007,8 @@ jobs:
                 "    }",
                 "    ",
                 "    private func fetchAndStartBilibiliDownload(bvid: String, cid: String, track: Track) {",
-                "        BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid) { [weak self] result in",
+                "        let isAudioOnly = stateQueue.sync { self.downloadAudioOnly }",
+                "        BilibiliApi.shared.getPlayUrl(bvid: bvid, cid: cid, audioOnly: isAudioOnly) { [weak self] result in",
                 "            DispatchQueue.main.async {",
                 "                switch result {",
                 "                case .success(let realUrl):",
@@ -4074,6 +4076,10 @@ jobs:
                 "    }"
               ].join("\n");
 
+              if (!dmCode.includes(oldDmBlock)) {
+                console.error("❌ OrpheusDownloadManager.swift: 下载任务即时注册补丁未匹配（源码已变化）");
+                process.exit(1);
+              }
               dmCode = dmCode.replace(oldDmBlock, newDmBlock);
               fs.writeFileSync(orpheusDmPath, dmCode, "utf8");
               console.log("✅ 已在 OrpheusDownloadManager.swift 中修复下载前即时注册任务与缺失 cid 时的自动解析");
