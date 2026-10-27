@@ -3554,6 +3554,33 @@ jobs:
               console.log("✅ 已在 BilibiliApi.swift 中支持 audioOnly DASH 音频流请求");
             }
           }
+          // 26. 增强下载音频文件在 iOS 系统「文件」App 中的可见性：
+          const downloadMgrPath = "packages/orpheus/ios/OrpheusDownloadManager.swift";
+          if (fs.existsSync(downloadMgrPath)) {
+            let dlCode = fs.readFileSync(downloadMgrPath, "utf8");
+            const targetMove = "try fileManager.moveItem(at: location, to: dest)";
+            if (dlCode.includes(targetMove) && !dlCode.includes("musicDir.appendingPathComponent")) {
+              const moveReplacement = [
+                "try fileManager.moveItem(at: location, to: dest)",
+                "            ",
+                "            // 同时在 Documents/Music 中为文件 App 维护可读命名的音频副本",
+                "            let musicDir = docs.appendingPathComponent(\"Music\")",
+                "            try? fileManager.createDirectory(at: musicDir, withIntermediateDirectories: true)",
+                "            if let t = trackMap[id] {",
+                "                let safeTitle = (t.title ?? id).replacingOccurrences(of: \"/\", with: \"_\").replacingOccurrences(of: \":\", with: \"_\").replacingOccurrences(of: \"\\\\\", with: \"_\")",
+                "                let safeArtist = t.artist?.replacingOccurrences(of: \"/\", with: \"_\").replacingOccurrences(of: \":\", with: \"_\").replacingOccurrences(of: \"\\\\\", with: \"_\")",
+                "                let cleanName = (safeArtist != nil && !safeArtist!.isEmpty) ? \"\\(safeArtist!) - \\(safeTitle).m4a\" : \"\\(safeTitle).m4a\"",
+                "                let musicDest = musicDir.appendingPathComponent(cleanName)",
+                "                try? fileManager.removeItem(at: musicDest)",
+                "                try? fileManager.copyItem(at: dest, to: musicDest)",
+                "            }"
+              ].join("\n");
+              dlCode = dlCode.replace(targetMove, moveReplacement);
+              fs.writeFileSync(downloadMgrPath, dlCode, "utf8");
+              console.log("✅ 已在 OrpheusDownloadManager.swift 中实现下载音频自动同步到 Music 目录");
+            }
+          }
+
           if (fs.existsSync(downloadMgrPath)) {
             let dlCode = fs.readFileSync(downloadMgrPath, "utf8");
             if (!dlCode.includes("setDownloadAudioOnly")) {
