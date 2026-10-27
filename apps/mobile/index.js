@@ -10,6 +10,10 @@ import { playerSideEffects } from './src/lib/player/PlayerSideEffects'
 
 playerSideEffects.initialize()
 
+import { initNowPlayingLiveActivity } from './src/lib/player/nowPlayingLiveActivity'
+
+initNowPlayingLiveActivity()
+
 import { initializeUpdateRequestHeaders } from './src/lib/services/updateTelemetry'
 
 // 越早越好：把安装 id 与当前渠道写入 expo-updates 原生 override 并持久化，
