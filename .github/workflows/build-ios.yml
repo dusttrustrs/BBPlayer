@@ -2561,8 +2561,27 @@ jobs:
                 "name='(tabs)'\n\t\t\t\t\t\t\toptions={{\n\t\t\t\t\t\t\t\theaderShown: false,\n\t\t\t\t\t\t\t\tcontentStyle: { backgroundColor: appBg },\n\t\t\t\t\t\t\t}}"
               );
             }
+            if (!layoutCode.includes("HIDDEN_SEGMENT_ROOTS.has(routeNameToSegmentRoot(route.name)))")) {
+              layoutCode = layoutCode.replace(
+                /focus:\s*\(\)\s*=>\s*\{[\s\S]*?nowPlayingBarStore\$\.hiddenScreenActive\.set\(true\)[\s\S]*?\}/,
+                [
+                  "focus: () => {",
+                  "  if (route.name !== 'modal') {",
+                  "    nowPlayingBarStore$.hiddenScreenActive.set(",
+                  "      HIDDEN_SEGMENT_ROOTS.has(",
+                  "        routeNameToSegmentRoot(route.name),",
+                  "      ),",
+                  "    )",
+                  "  }",
+                  "  if (route.name !== '(tabs)' && route.name !== 'modal') {",
+                  "    nowPlayingBarStore$.retainedBottomTabBarHeight.set(0)",
+                  "  }",
+                  "}"
+                ].join("\n")
+              );
+            }
             fs.writeFileSync(rootLayoutPath, layoutCode, "utf8");
-            console.log("✅ 已在 _layout.tsx 中为 Stack 和 (tabs) 设置 contentStyle 背景色");
+            console.log("✅ 已在 _layout.tsx 中为 Stack 和 (tabs) 设置 contentStyle 背景色并修复左滑返回播放条消失");
           }
           const providersPath = "apps/mobile/src/components/providers.tsx";
           if (fs.existsSync(providersPath)) {
@@ -3027,212 +3046,322 @@ jobs:
           const commentItemPath = "apps/mobile/src/features/comments/components/CommentItem.tsx";
           if (fs.existsSync(commentItemPath)) {
             let commentCode = fs.readFileSync(commentItemPath, "utf8");
-            if (!commentCode.includes("resolveBilibiliImageUrl")) {
+            if (!commentCode.includes("PinchableImageView")) {
+              if (!commentCode.includes("resolveBilibiliImageUrl")) {
+                commentCode = commentCode.replace(
+                  "import { formatRelativeTime } from '@/utils/time'",
+                  "import { formatRelativeTime } from '@/utils/time'\nimport { resolveBilibiliImageUrl } from '@/utils/imageUrl'"
+                );
+              }
+              if (!commentCode.includes("expo-file-system/legacy")) {
+                commentCode = "import * as FileSystem from 'expo-file-system/legacy'\nimport * as MediaLibrary from 'expo-media-library'\nimport { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'\nimport Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'\nimport toast from '@/utils/toast'\n" + commentCode;
+              }
+              if (!commentCode.includes("Icon as PaperIcon")) {
+                commentCode = commentCode.replace(
+                  "import { Text, useTheme } from 'react-native-paper'",
+                  "import { Icon as PaperIcon, Text, useTheme } from 'react-native-paper'"
+                );
+              }
+              if (!commentCode.includes("Modal,")) {
+                commentCode = commentCode.replace(
+                  "import { Appearance, StyleSheet, TouchableOpacity, View } from 'react-native'",
+                  "import { Appearance, Modal, SafeAreaView, StyleSheet, TouchableOpacity, View } from 'react-native'"
+                );
+              }
+              if (!commentCode.includes("viewerIndex")) {
+                commentCode = commentCode.replace(
+                  "const [liked, setLiked] = useState(item.action === 1)",
+                  "const [liked, setLiked] = useState(item.action === 1)\n  const [viewerIndex, setViewerIndex] = useState<number | null>(null)\n  const [isSaving, setIsSaving] = useState(false)"
+                );
+              }
+              const pinchableComponent = [
+                "",
+                "interface PinchableImageViewProps {",
+                "  uri: string",
+                "  headers?: Record<string, string>",
+                "}",
+                "",
+                "const PinchableImageView = memo(function PinchableImageView({",
+                "  uri,",
+                "  headers,",
+                "}: PinchableImageViewProps) {",
+                "  const scale = useSharedValue(1)",
+                "  const savedScale = useSharedValue(1)",
+                "  const translateX = useSharedValue(0)",
+                "  const savedTranslateX = useSharedValue(0)",
+                "  const translateY = useSharedValue(0)",
+                "  const savedTranslateY = useSharedValue(0)",
+                "",
+                "  const pinchGesture = Gesture.Pinch()",
+                "    .onUpdate((e) => {",
+                "      'worklet'",
+                "      scale.value = Math.max(0.8, Math.min(savedScale.value * e.scale, 5))",
+                "    })",
+                "    .onEnd(() => {",
+                "      'worklet'",
+                "      if (scale.value < 1.05) {",
+                "        scale.value = withSpring(1, { damping: 18, stiffness: 120 })",
+                "        translateX.value = withSpring(0, { damping: 18, stiffness: 120 })",
+                "        translateY.value = withSpring(0, { damping: 18, stiffness: 120 })",
+                "        savedScale.value = 1",
+                "        savedTranslateX.value = 0",
+                "        savedTranslateY.value = 0",
+                "      } else {",
+                "        savedScale.value = scale.value",
+                "      }",
+                "    })",
+                "",
+                "  const panGesture = Gesture.Pan()",
+                "    .averageTouches(true)",
+                "    .onUpdate((e) => {",
+                "      'worklet'",
+                "      if (scale.value > 1.05) {",
+                "        translateX.value = savedTranslateX.value + e.translationX",
+                "        translateY.value = savedTranslateY.value + e.translationY",
+                "      }",
+                "    })",
+                "    .onEnd(() => {",
+                "      'worklet'",
+                "      if (scale.value <= 1.05) {",
+                "        translateX.value = withSpring(0, { damping: 18, stiffness: 120 })",
+                "        translateY.value = withSpring(0, { damping: 18, stiffness: 120 })",
+                "        savedTranslateX.value = 0",
+                "        savedTranslateY.value = 0",
+                "      } else {",
+                "        savedScale.value = translateX.value",
+                "        savedTranslateY.value = translateY.value",
+                "      }",
+                "    })",
+                "",
+                "  const doubleTap = Gesture.Tap()",
+                "    .numberOfTaps(2)",
+                "    .onEnd(() => {",
+                "      'worklet'",
+                "      if (scale.value > 1.2) {",
+                "        scale.value = withSpring(1, { damping: 18, stiffness: 120 })",
+                "        translateX.value = withSpring(0, { damping: 18, stiffness: 120 })",
+                "        translateY.value = withSpring(0, { damping: 18, stiffness: 120 })",
+                "        savedScale.value = 1",
+                "        savedTranslateX.value = 0",
+                "        savedTranslateY.value = 0",
+                "      } else {",
+                "        scale.value = withSpring(2.5, { damping: 18, stiffness: 120 })",
+                "        savedScale.value = 2.5",
+                "      }",
+                "    })",
+                "",
+                "  const composed = Gesture.Simultaneous(pinchGesture, panGesture, doubleTap)",
+                "",
+                "  const animatedStyle = useAnimatedStyle(() => {",
+                "    'worklet'",
+                "    return {",
+                "      transform: [",
+                "        { translateX: translateX.value },",
+                "        { translateY: translateY.value },",
+                "        { scale: scale.value },",
+                "      ],",
+                "    }",
+                "  })",
+                "",
+                "  return (",
+                "    <GestureDetector gesture={composed}>",
+                "      <Animated.View",
+                "        style={[",
+                "          {",
+                "            width: '100%',",
+                "            height: '100%',",
+                "            justifyContent: 'center',",
+                "            alignItems: 'center',",
+                "          },",
+                "          animatedStyle,",
+                "        ]}",
+                "      >",
+                "        <Image",
+                "          source={{ uri, headers }}",
+                "          style={styles.viewerImage}",
+                "          contentFit='contain'",
+                "          cachePolicy='disk'",
+                "        />",
+                "      </Animated.View>",
+                "    </GestureDetector>",
+                "  )",
+                "})",
+                ""
+              ].join("\n");
               commentCode = commentCode.replace(
-                "import { formatRelativeTime } from '@/utils/time'",
-                "import { formatRelativeTime } from '@/utils/time'\nimport { resolveBilibiliImageUrl } from '@/utils/imageUrl'"
+                "export function CommentItem({ item, onReplyPress, bvid }: CommentItemProps) {",
+                pinchableComponent + "export function CommentItem({ item, onReplyPress, bvid }: CommentItemProps) {"
               );
-            }
-            if (!commentCode.includes("expo-file-system/legacy")) {
-              commentCode = "import * as FileSystem from 'expo-file-system/legacy'\nimport * as MediaLibrary from 'expo-media-library'\nimport toast from '@/utils/toast'\n" + commentCode;
-            }
-            if (!commentCode.includes("Icon as PaperIcon")) {
-              commentCode = commentCode.replace(
-                "import { Text, useTheme } from 'react-native-paper'",
-                "import { Icon as PaperIcon, Text, useTheme } from 'react-native-paper'"
-              );
-            }
-            if (!commentCode.includes("Modal,")) {
-              commentCode = commentCode.replace(
-                "import { Appearance, StyleSheet, TouchableOpacity, View } from 'react-native'",
-                "import { Appearance, Modal, SafeAreaView, StyleSheet, TouchableOpacity, View } from 'react-native'"
-              );
-            }
-            if (!commentCode.includes("viewerIndex")) {
-              commentCode = commentCode.replace(
-                "const [liked, setLiked] = useState(item.action === 1)",
-                "const [liked, setLiked] = useState(item.action === 1)\n  const [viewerIndex, setViewerIndex] = useState<number | null>(null)\n  const [isSaving, setIsSaving] = useState(false)"
-              );
-            }
-            const oldPicturesBlock = /\{item\.content\.pictures && item\.content\.pictures\.length > 0 && \([\s\S]*?<\/View>\s*\)\}/;
-            const newPicturesBlock = [
-              "{item.content.pictures && item.content.pictures.length > 0 && (",
-              "            <View style={styles.imagesContainer}>",
-              "              {item.content.pictures.map((pic, index) => {",
-              "                const formattedUrl =",
-              "                  resolveBilibiliImageUrl(pic.img_src, 600) ??",
-              "                  (pic.img_src?.startsWith('//')",
-              "                    ? `https:${pic.img_src}`",
-              "                    : pic.img_src?.replace(/^http:/, 'https:')) ??",
-              "                  ''",
-              "                return (",
-              "                  <TouchableOpacity",
-              "                    key={index}",
-              "                    activeOpacity={0.85}",
-              "                    onPress={() => setViewerIndex(index)}",
-              "                    style={[",
-              "                      styles.commentImage,",
-              "                      { backgroundColor: darkMode ? '#262626' : '#f0f0f0' },",
-              "                    ]}",
-              "                    testID='comment-image'",
-              "                  >",
-              "                    <Image",
-              "                      source={{",
-              "                        uri: formattedUrl,",
-              "                        headers: { Referer: 'https://www.bilibili.com' },",
-              "                      }}",
-              "                      style={styles.commentImageInner}",
-              "                      contentFit='cover'",
-              "                      cachePolicy='disk'",
-              "                    />",
-              "                  </TouchableOpacity>",
-              "                )",
-              "              })}",
-              "            </View>",
-              "          )}",
-              "",
-              "          {item.content.pictures && item.content.pictures.length > 0 && viewerIndex !== null && (",
-              "            <Modal",
-              "              visible={viewerIndex !== null}",
-              "              transparent",
-              "              animationType='fade'",
-              "              onRequestClose={() => setViewerIndex(null)}",
-              "              statusBarTranslucent",
-              "            >",
-              "              <View style={styles.viewerModalContainer}>",
-              "                <SafeAreaView style={styles.viewerTopBar}>",
-              "                  <IconButton",
-              "                    icon='close'",
-              "                    size={24}",
-              "                    iconColor='#ffffff'",
-              "                    onPress={() => setViewerIndex(null)}",
-              "                  />",
-              "                  {item.content.pictures.length > 1 && (",
-              "                    <Text style={styles.viewerPageIndicator}>",
-              "                      {viewerIndex + 1} / {item.content.pictures.length}",
-              "                    </Text>",
-              "                  )}",
-              "                  <View style={{ width: 48 }} />",
-              "                </SafeAreaView>",
-              "",
-              "                <View style={styles.viewerImageContainer}>",
-              "                  {item.content.pictures.length > 1 && viewerIndex > 0 && (",
-              "                    <TouchableOpacity",
-              "                      style={[styles.viewerNavArrow, { left: 16 }]}",
-              "                      onPress={() => setViewerIndex(viewerIndex - 1)}",
-              "                    >",
-              "                      <IconButton",
-              "                        icon='chevron-left'",
-              "                        size={28}",
-              "                        iconColor='#ffffff'",
-              "                      />",
-              "                    </TouchableOpacity>",
-              "                  )}",
-              "",
-              "                  <Image",
-              "                    source={{",
-              "                      uri:",
-              "                        resolveBilibiliImageUrl(",
-              "                          item.content.pictures[viewerIndex]?.img_src,",
-              "                          1600,",
-              "                        ) ??",
-              "                        (item.content.pictures[viewerIndex]?.img_src?.startsWith('//')",
-              "                          ? `https:${item.content.pictures[viewerIndex]?.img_src}`",
-              "                          : item.content.pictures[viewerIndex]?.img_src?.replace(/^http:/, 'https:')) ??",
-              "                        '',",
-              "                      headers: { Referer: 'https://www.bilibili.com' },",
-              "                    }}",
-              "                    style={styles.viewerImage}",
-              "                    contentFit='contain'",
-              "                    cachePolicy='disk'",
-              "                  />",
-              "",
-              "                  {item.content.pictures.length > 1 &&",
-              "                    viewerIndex < item.content.pictures.length - 1 && (",
-              "                      <TouchableOpacity",
-              "                        style={[styles.viewerNavArrow, { right: 16 }]}",
-              "                        onPress={() => setViewerIndex(viewerIndex + 1)}",
-              "                      >",
-              "                        <IconButton",
-              "                          icon='chevron-right'",
-              "                          size={28}",
-              "                          iconColor='#ffffff'",
-              "                        />",
-              "                      </TouchableOpacity>",
-              "                    )}",
-              "                </View>",
-              "",
-              "                <SafeAreaView style={styles.viewerBottomBar}>",
-              "                  <TouchableOpacity",
-              "                    style={styles.downloadButton}",
-              "                    disabled={isSaving}",
-              "                    onPress={async () => {",
-              "                      if (",
-              "                        viewerIndex === null ||",
-              "                        !item.content.pictures?.[viewerIndex]",
-              "                      )",
-              "                        return",
-              "                      const rawSrc = item.content.pictures[viewerIndex].img_src",
-              "                      const targetUrl =",
-              "                        resolveBilibiliImageUrl(rawSrc, 1600) ??",
-              "                        (rawSrc?.startsWith('//')",
-              "                          ? `https:${rawSrc}`",
-              "                          : rawSrc?.replace(/^http:/, 'https:')) ??",
-              "                        ''",
-              "                      if (!targetUrl) return",
-              "",
-              "                      try {",
-              "                        setIsSaving(true)",
-              "                        const permission =",
-              "                          await MediaLibrary.requestPermissionsAsync()",
-              "                        if (!permission.granted) {",
-              "                          toast.error('需要相册访问权限才能保存图片')",
-              "                          return",
-              "                        }",
-              "                        const filename = `bilibili_${Date.now()}.jpg`",
-              "                        const fileUri = `${FileSystem.cacheDirectory}${filename}`",
-              "                        const res = await FileSystem.downloadAsync(",
-              "                          targetUrl,",
-              "                          fileUri,",
-              "                          { headers: { Referer: 'https://www.bilibili.com' } },",
-              "                        )",
-              "                        const mediaLibAny = MediaLibrary as unknown as {",
-              "                          Asset?: { create?: (uri: string) => Promise<unknown> }",
-              "                          createAssetAsync?: (uri: string) => Promise<unknown>",
-              "                          saveToLibraryAsync?: (uri: string) => Promise<unknown>",
-              "                        }",
-              "                        if (mediaLibAny.Asset && typeof mediaLibAny.Asset.create === 'function') {",
-              "                          await mediaLibAny.Asset.create(res.uri)",
-              "                        } else if (typeof mediaLibAny.createAssetAsync === 'function') {",
-              "                          await mediaLibAny.createAssetAsync(res.uri)",
-              "                        } else if (typeof mediaLibAny.saveToLibraryAsync === 'function') {",
-              "                          await mediaLibAny.saveToLibraryAsync(res.uri)",
-              "                        }",
-              "                        toast.success('图片已成功保存到相册')",
-              "                      } catch (err) {",
-              "                        toastAndLogError(",
-              "                          '保存图片失败',",
-              "                          err,",
-              "                          'Comments.DownloadImage',",
-              "                        )",
-              "                      } finally {",
-              "                        setIsSaving(false)",
-              "                      }",
-              "                    }}",
-              "                  >",
-              "                    <PaperIcon source='download' size={20} color='#ffffff' />",
-              "                    <Text style={styles.downloadButtonText}>",
-              "                      {isSaving ? '正在保存...' : '下载图片'}",
-              "                    </Text>",
-              "                  </TouchableOpacity>",
-              "                </SafeAreaView>",
-              "              </View>",
-              "            </Modal>",
-              "          )}"
-            ].join("\n");
-            commentCode = commentCode.replace(oldPicturesBlock, newPicturesBlock);
+              const oldPicturesBlock = /\{item\.content\.pictures && item\.content\.pictures\.length > 0 && \([\s\S]*?<\/View>\s*\)\}/;
+              const newPicturesBlock = [
+                "{item.content.pictures && item.content.pictures.length > 0 && (",
+                "            <View style={styles.imagesContainer}>",
+                "              {item.content.pictures.map((pic, index) => {",
+                "                const formattedUrl =",
+                "                  resolveBilibiliImageUrl(pic.img_src, 600) ??",
+                "                  (pic.img_src?.startsWith('//')",
+                "                    ? `https:${pic.img_src}`",
+                "                    : pic.img_src?.replace(/^http:/, 'https:')) ??",
+                "                  ''",
+                "                return (",
+                "                  <TouchableOpacity",
+                "                    key={index}",
+                "                    activeOpacity={0.85}",
+                "                    onPress={() => setViewerIndex(index)}",
+                "                    style={[",
+                "                      styles.commentImage,",
+                "                      { backgroundColor: darkMode ? '#262626' : '#f0f0f0' },",
+                "                    ]}",
+                "                    testID='comment-image'",
+                "                  >",
+                "                    <Image",
+                "                      source={{",
+                "                        uri: formattedUrl,",
+                "                        headers: { Referer: 'https://www.bilibili.com' },",
+                "                      }}",
+                "                      style={styles.commentImageInner}",
+                "                      contentFit='cover'",
+                "                      cachePolicy='disk'",
+                "                    />",
+                "                  </TouchableOpacity>",
+                "                )",
+                "              })}",
+                "            </View>",
+                "          )}",
+                "",
+                "          {item.content.pictures && item.content.pictures.length > 0 && viewerIndex !== null && (",
+                "            <Modal",
+                "              visible={viewerIndex !== null}",
+                "              transparent={false}",
+                "              animationType='fade'",
+                "              onRequestClose={() => setViewerIndex(null)}",
+                "            >",
+                "              <GestureHandlerRootView style={{ flex: 1 }}>",
+                "                <View style={styles.viewerModalContainer}>",
+                "                  <SafeAreaView style={styles.viewerTopBar}>",
+                "                    <TouchableOpacity",
+                "                      hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}",
+                "                      onPress={() => setViewerIndex(null)}",
+                "                    >",
+                "                      <PaperIcon source='close' size={28} color='#ffffff' />",
+                "                    </TouchableOpacity>",
+                "                    <Text style={styles.viewerPageIndicator}>",
+                "                      {(viewerIndex ?? 0) + 1} / {item.content.pictures.length}",
+                "                    </Text>",
+                "                    <View style={{ width: 28 }} />",
+                "                  </SafeAreaView>",
+                "",
+                "                  <View style={styles.viewerImageContainer}>",
+                "                    {viewerIndex !== null && item.content.pictures[viewerIndex] && (",
+                "                      <PinchableImageView",
+                "                        key={viewerIndex}",
+                "                        uri={",
+                "                          resolveBilibiliImageUrl(",
+                "                            item.content.pictures[viewerIndex].img_src,",
+                "                            1600,",
+                "                          ) ??",
+                "                          (item.content.pictures[viewerIndex].img_src?.startsWith('//')",
+                "                            ? `https:${item.content.pictures[viewerIndex].img_src}`",
+                "                            : item.content.pictures[viewerIndex].img_src?.replace(/^http:/, 'https:')) ??",
+                "                          ''",
+                "                        }",
+                "                        headers={{ Referer: 'https://www.bilibili.com' }}",
+                "                      />",
+                "                    )}",
+                "",
+                "                    {viewerIndex !== null && viewerIndex > 0 && (",
+                "                      <TouchableOpacity",
+                "                        style={[styles.viewerNavArrow, { left: 16 }]}",
+                "                        hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}",
+                "                        onPress={() => setViewerIndex(viewerIndex - 1)}",
+                "                      >",
+                "                        <PaperIcon source='chevron-left' size={36} color='#ffffff' />",
+                "                      </TouchableOpacity>",
+                "                    )}",
+                "",
+                "                    {viewerIndex !== null &&",
+                "                      viewerIndex < item.content.pictures.length - 1 && (",
+                "                        <TouchableOpacity",
+                "                          style={[styles.viewerNavArrow, { right: 16 }]}",
+                "                          hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}",
+                "                          onPress={() => setViewerIndex(viewerIndex + 1)}",
+                "                        >",
+                "                          <PaperIcon source='chevron-right' size={36} color='#ffffff' />",
+                "                        </TouchableOpacity>",
+                "                      )}",
+                "                  </View>",
+                "",
+                "                  <SafeAreaView style={styles.viewerBottomBar}>",
+                "                    <TouchableOpacity",
+                "                      style={styles.downloadButton}",
+                "                      disabled={isSaving}",
+                "                      onPress={async () => {",
+                "                        if (",
+                "                          viewerIndex === null ||",
+                "                          !item.content.pictures?.[viewerIndex]",
+                "                        )",
+                "                          return",
+                "                        const rawSrc = item.content.pictures[viewerIndex].img_src",
+                "                        const targetUrl =",
+                "                          resolveBilibiliImageUrl(rawSrc, 1600) ??",
+                "                          (rawSrc?.startsWith('//')",
+                "                            ? `https:${rawSrc}`",
+                "                            : rawSrc?.replace(/^http:/, 'https:')) ??",
+                "                          ''",
+                "                        if (!targetUrl) return",
+                "",
+                "                        try {",
+                "                          setIsSaving(true)",
+                "                          const permission =",
+                "                            await MediaLibrary.requestPermissionsAsync()",
+                "                          if (!permission.granted) {",
+                "                            toast.error('需要相册访问权限才能保存图片')",
+                "                            return",
+                "                          }",
+                "                          const filename = `bilibili_${Date.now()}.jpg`",
+                "                          const fileUri = `${FileSystem.cacheDirectory}${filename}`",
+                "                          const res = await FileSystem.downloadAsync(",
+                "                            targetUrl,",
+                "                            fileUri,",
+                "                            { headers: { Referer: 'https://www.bilibili.com' } },",
+                "                          )",
+                "                          const mediaLibAny = MediaLibrary as unknown as {",
+                "                            Asset?: { create?: (uri: string) => Promise<unknown> }",
+                "                            createAssetAsync?: (uri: string) => Promise<unknown>",
+                "                            saveToLibraryAsync?: (uri: string) => Promise<unknown>",
+                "                          }",
+                "                          if (mediaLibAny.Asset && typeof mediaLibAny.Asset.create === 'function') {",
+                "                            await mediaLibAny.Asset.create(res.uri)",
+                "                          } else if (typeof mediaLibAny.createAssetAsync === 'function') {",
+                "                            await mediaLibAny.createAssetAsync(res.uri)",
+                "                          } else if (typeof mediaLibAny.saveToLibraryAsync === 'function') {",
+                "                            await mediaLibAny.saveToLibraryAsync(res.uri)",
+                "                          }",
+                "                          toast.success('图片已成功保存到相册')",
+                "                        } catch (err) {",
+                "                          toastAndLogError(",
+                "                            '保存图片失败',",
+                "                            err,",
+                "                            'Comments.DownloadImage',",
+                "                          )",
+                "                        } finally {",
+                "                          setIsSaving(false)",
+                "                        }",
+                "                      }}",
+                "                    >",
+                "                      <PaperIcon source='download' size={20} color='#ffffff' />",
+                "                      <Text style={styles.downloadButtonText}>",
+                "                        {isSaving ? '正在保存...' : '下载图片'}",
+                "                      </Text>",
+                "                    </TouchableOpacity>",
+                "                  </SafeAreaView>",
+                "                </View>",
+                "              </GestureHandlerRootView>",
+                "            </Modal>",
+                "          )}"
+              ].join("\n");
+              commentCode = commentCode.replace(oldPicturesBlock, newPicturesBlock);
 
-            if (!commentCode.includes("viewerImageContainer: {")) {
               const viewerStyles = [
                 "  viewerModalContainer: {",
                 "    flex: 1,",
@@ -3301,7 +3430,7 @@ jobs:
               commentCode = commentCode.replace("const styles = StyleSheet.create({", "const styles = StyleSheet.create({\n" + viewerStyles);
             }
             fs.writeFileSync(commentItemPath, commentCode, "utf8");
-            console.log("✅ 已在 CommentItem.tsx 中实现评论区图片点击放大与保存图片");
+            console.log("✅ 已在 CommentItem.tsx 中实现评论区图片双指缩放、放大与保存图片");
           }
 
           // 26. 增强下载音频文件在 iOS 系统「文件」App 中的可见性：
@@ -3938,6 +4067,139 @@ jobs:
               );
               fs.writeFileSync(remotePlaylistMenuPath, pmCode, "utf8");
               console.log("✅ 已在 usePlaylistMenu.ts 中为远程歌单二级菜单添加下载选项");
+            }
+          }
+
+          // 33. 为音乐播放栏添加缓慢向上淡入/缓慢向下淡出效果与回弹弹簧动画，修复左滑返回后播放条消失：
+          const nowPlayingBarPath = "apps/mobile/src/components/NowPlayingBar.tsx";
+          if (fs.existsSync(nowPlayingBarPath)) {
+            let npCode = fs.readFileSync(nowPlayingBarPath, "utf8");
+            if (!npCode.includes("withSpring")) {
+              npCode = npCode.replace(/import\s*\{\s*EaseView\s*\}\s*from\s*['"]react-native-ease['"];?\r?\n?/, "");
+              npCode = npCode.replace(
+                /import\s+Animated,\s*\{[\s\S]*?\}\s*from\s*['"]react-native-reanimated['"]/,
+                [
+                  "import Animated, {",
+                  "  Easing,",
+                  "  useAnimatedStyle,",
+                  "  useReducedMotion,",
+                  "  useSharedValue,",
+                  "  withSpring,",
+                  "  withTiming,",
+                  "} from 'react-native-reanimated'"
+                ].join("\n")
+              );
+              npCode = npCode.replace(
+                /function NowPlayingBar\(\)\s*\{[\s\S]*?return <NowPlayingBarContent \/>\s*\}/,
+                [
+                  "function NowPlayingBar() {",
+                  "  const segments = useSegments()",
+                  "  const hiddenScreenActive = useValue(nowPlayingBarStore$.hiddenScreenActive)",
+                  "  const currentTrack = useCurrentTrack()",
+                  "  const shouldShow =",
+                  "    currentTrack !== null &&",
+                  "    !hiddenScreenActive &&",
+                  "    !HIDDEN_SEGMENT_ROOTS.has(segments[0] ?? '')",
+                  "",
+                  "  return <NowPlayingBarContent shouldShow={shouldShow} />",
+                  "}"
+                ].join("\n")
+              );
+              npCode = npCode.replace(
+                /const NowPlayingBarContent = memo\(function NowPlayingBarContent\(\)\s*\{/,
+                [
+                  "const NowPlayingBarContent = memo(function NowPlayingBarContent({",
+                  "  shouldShow,",
+                  "}: {",
+                  "  shouldShow: boolean",
+                  "}) {"
+                ].join("\n")
+              );
+              npCode = npCode.replace(
+                /const bottomPadding = isDocked && bottomBarHeight === 0 \? insets\.bottom : 0[\s\S]*?const disableTransition = reduceMotion/,
+                [
+                  "  const bottomPadding = isDocked && bottomBarHeight === 0 ? insets.bottom : 0",
+                  "",
+                  "  const reduceMotion = useReducedMotion()",
+                  "",
+                  "  // 动画控制：缓慢向上淡入 / 缓慢向下淡出，并给予舒适的回弹动画",
+                  "  const animProgress = useSharedValue(shouldShow ? 1 : 0)",
+                  "  const animOpacity = useSharedValue(shouldShow ? 1 : 0)",
+                  "  const bottomMarginSv = useSharedValue(bottomMargin)",
+                  "",
+                  "  useEffect(() => {",
+                  "    bottomMarginSv.value = withTiming(bottomMargin, {",
+                  "      duration: 240,",
+                  "      easing: Easing.out(Easing.cubic),",
+                  "    })",
+                  "  }, [bottomMargin, bottomMarginSv])",
+                  "",
+                  "  useEffect(() => {",
+                  "    if (reduceMotion) {",
+                  "      animProgress.value = shouldShow ? 1 : 0",
+                  "      animOpacity.value = shouldShow ? 1 : 0",
+                  "      return",
+                  "    }",
+                  "",
+                  "    if (shouldShow) {",
+                  "      // 缓慢向上淡入，带舒适的回弹 (spring)",
+                  "      animProgress.value = withSpring(1, {",
+                  "        damping: 17,",
+                  "        stiffness: 95,",
+                  "        mass: 1,",
+                  "      })",
+                  "      animOpacity.value = withTiming(1, {",
+                  "        duration: 380,",
+                  "        easing: Easing.out(Easing.cubic),",
+                  "      })",
+                  "    } else {",
+                  "      // 缓慢向下淡出",
+                  "      animProgress.value = withTiming(0, {",
+                  "        duration: 300,",
+                  "        easing: Easing.in(Easing.cubic),",
+                  "      })",
+                  "      animOpacity.value = withTiming(0, {",
+                  "        duration: 260,",
+                  "        easing: Easing.out(Easing.quad),",
+                  "      })",
+                  "    }",
+                  "  }, [shouldShow, reduceMotion, animProgress, animOpacity])",
+                  "",
+                  "  const containerAnimatedStyle = useAnimatedStyle(() => {",
+                  "    'worklet'",
+                  "    const exitOffsetY = (1 - animProgress.value) * 120",
+                  "    return {",
+                  "      transform: [{ translateY: -bottomMarginSv.value + exitOffsetY }],",
+                  "      opacity: animOpacity.value,",
+                  "    }",
+                  "  })"
+                ].join("\n")
+              );
+              npCode = npCode.replace(
+                /<EaseView[\s\S]*?pointerEvents=['"]box-none['"]\s*style=\{styles\.nowPlayingBarContainer\}\s*>\s*\{isVisible && \(/,
+                [
+                  "    <Animated.View",
+                  "      pointerEvents={shouldShow ? 'box-none' : 'none'}",
+                  "      style={[styles.nowPlayingBarContainer, containerAnimatedStyle]}",
+                  "    >",
+                  "      {currentTrack !== null && ("
+                ].join("\n")
+              );
+              npCode = npCode.replace(/\)\}\s*<\/EaseView>/, ")}\n    </Animated.View>");
+              npCode = npCode.replace(
+                /nowPlayingBarContainer:\s*\{[\s\S]*?bottom:\s*0,\s*\}/,
+                [
+                  "nowPlayingBarContainer: {",
+                  "    position: 'absolute',",
+                  "    left: 0,",
+                  "    right: 0,",
+                  "    bottom: 0,",
+                  "    zIndex: 999,",
+                  "  }"
+                ].join("\n")
+              );
+              fs.writeFileSync(nowPlayingBarPath, npCode, "utf8");
+              console.log("✅ 已在 NowPlayingBar.tsx 中注入缓慢向上淡入带回弹/缓慢向下淡出动画与手势保护");
             }
           }
 
