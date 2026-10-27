@@ -3611,7 +3611,7 @@ jobs:
               );
             }
             if (!dlCode.includes("rawDest")) {
-              const targetUrlSessionPattern = /let dest = downloadsDir\.appendingPathComponent\("\\\(id\)\.mp4"\)[\s\S]*?(?:try\? fileManager\.copyItem\(at: dest, to: musicDest\)\s*\}|try fileManager\.moveItem\(at: location, to: dest\))/;
+              const targetUrlSessionPattern = /\/\/ Use mp4 for[^\n]*\n\s*let dest = downloadsDir\.appendingPathComponent\("\\\(id\)\.mp4"\)[\s\S]*?(?:try\? fileManager\.copyItem\(at: dest, to: musicDest\)\s*\}|try fileManager\.moveItem\(at: location, to: dest\))/;
               const fullReplacement = [
                 "// Use mp4 for internal storage consistency",
                 "            let dest = downloadsDir.appendingPathComponent(\"\\(id).mp4\")",
