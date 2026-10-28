@@ -2,6 +2,12 @@ name: Build iOS IPA (Unsigned)
 
 on:
   workflow_dispatch: # 支持在 GitHub Actions 页面手动一键触发构建
+    inputs:
+      release_version:
+        description: "应用版本号（x.y.z，例如 1.1.1）"
+        required: true
+        default: "1.1.1"
+        type: string
   push:
     branches:
       - master
@@ -28,6 +34,7 @@ jobs:
     env:
       APP_VARIANT: production
       EXPO_NO_TELEMETRY: "1"
+      RELEASE_VERSION: ${{ github.event.inputs.release_version || '1.1.1' }}
 
     steps:
       - name: 🏗️ 检出代码
@@ -1528,11 +1535,35 @@ jobs:
             fs.writeFileSync(myTabPath, myTabCode, "utf8");
             console.log("✅ 已增大 (tabs)/my.tsx 底部滚动安全间距以避免遮挡那月今日");
           }
-          // 15. 将检查更新替换为 dusttrustrs/BBPlayer-iOS-Package 的 GitHub Release 更新源：
-          // 同步版本号为 1.0.0，从 GitHub 官方 Releases API 拉取最新发行说明与链接。
+          // 15. 将检查更新替换为 dusttrustrs/BBPlayer-iOS-Package 的 GitHub Release 更新源。
+          // 构建版本从 workflow_dispatch 的 RELEASE_VERSION 获取，并确保版本段按数字比较。
           const updateSvcPath = "apps/mobile/src/lib/services/updateService.ts";
           if (fs.existsSync(updateSvcPath)) {
             let updateSvcCode = fs.readFileSync(updateSvcPath, "utf8");
+            const numericCompareSemver = [
+              "export const compareSemver = (a: string, b: string): number => {",
+              "    const parse = (value: string): number[] | null => {",
+              "        const core = value.trim().replace(/^v/i, '').split(/[+-]/, 1)[0]",
+              "        if (!/^\\d+(?:\\.\\d+){0,2}$/.test(core)) return null",
+              "        const parts = core.split('.').map(Number)",
+              "        if (parts.some((part) => !Number.isSafeInteger(part) || part < 0)) return null",
+              "        return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0]",
+              "    }",
+              "    const leftParts = parse(a)",
+              "    const rightParts = parse(b)",
+              "    if (!leftParts || !rightParts) return 0",
+              "    for (let i = 0; i < 3; i++) {",
+              "        if (leftParts[i] !== rightParts[i]) return leftParts[i] > rightParts[i] ? 1 : -1",
+              "    }",
+              "    return 0",
+              "}",
+              "",
+            ].join("\n");
+            const semverComparePattern = /export const compareSemver = \(a: string, b: string\): number => \{[\s\S]*?\r?\n\}/;
+            if (!semverComparePattern.test(updateSvcCode)) {
+              throw new Error("未找到 updateService.ts 的 compareSemver 声明，无法修复版本判断逻辑");
+            }
+            updateSvcCode = updateSvcCode.replace(semverComparePattern, numericCompareSemver.join("\n"));
             const newFetchRelease = [
               "export async function fetchLatestRelease(): Promise<Result<ReleaseInfo, Error>> {",
               "    try {",
@@ -1551,8 +1582,9 @@ jobs:
               "            return err(new Error('获取更新信息失败: ' + res.status + ' ' + res.statusText))",
               "        }",
               "        const data = (await res.json()) as Record<string, unknown>",
-              "        const rawTag = typeof data.tag_name === 'string' ? data.tag_name : '1.0.0'",
-              "        const version = normalizeVersion(rawTag.replace(/^v/, '').split('-')[0])",
+              "        const rawTag = typeof data.tag_name === 'string' ? data.tag_name : ''",
+              "        const version = normalizeVersion(rawTag.replace(/^v/i, '').split('-')[0])",
+              "        if (!version) return err(new Error('GitHub Release 缺少有效的 semver tag'))",
               "        const url =",
               "            typeof data.html_url === 'string'",
               "                ? data.html_url",
@@ -1572,14 +1604,18 @@ jobs:
             ].join("\n");
             updateSvcCode = updateSvcCode.replace(/export async function fetchLatestRelease\(\): Promise<[\s\S]*?\n\}/, newFetchRelease);
             fs.writeFileSync(updateSvcPath, updateSvcCode, "utf8");
-            console.log("✅ 已配置 updateService.ts 指向 GitHub Release API 更新源");
+            console.log("✅ 已配置 updateService.ts 指向 GitHub Release API，并启用数字段版本比较");
           }
           const mobilePkgPath = "apps/mobile/package.json";
           if (fs.existsSync(mobilePkgPath)) {
             const pkgData = JSON.parse(fs.readFileSync(mobilePkgPath, "utf8"));
-            pkgData.version = "1.0.0";
+            const releaseVersion = (process.env.RELEASE_VERSION || "").trim().replace(/^v/i, "").split("-")[0];
+            if (!/^\d+\.\d+\.\d+$/.test(releaseVersion)) {
+              throw new Error("RELEASE_VERSION 必须是 x.y.z 格式，例如 1.1.1");
+            }
+            pkgData.version = releaseVersion;
             fs.writeFileSync(mobilePkgPath, JSON.stringify(pkgData, null, 2) + "\n", "utf8");
-            console.log("✅ 已同步 apps/mobile/package.json 版本号为 1.0.0 (匹配 iOS 发布版)");
+            console.log(`✅ 已同步 apps/mobile/package.json 版本号为 ${releaseVersion}`);
           }
           const appConfigPath = "apps/mobile/app.config.ts";
           if (fs.existsSync(appConfigPath)) {
@@ -4632,6 +4668,39 @@ jobs:
           '
           # 必须带 --no-install，确保在注入 $RNFirebaseDisableSPM 之后再统一执行 pod install
           npx expo prebuild --platform ios --clean --no-install 2>&1 | tee -a "$RUNNER_TEMP/build-ios.log"
+          # Expo 会从 package.json 生成 MARKETING_VERSION；这里再次锁定它，防止旧的
+          # ios 工程缓存或 app.config 覆盖 RELEASE_VERSION，导致 IPA 仍显示 1.0.0。
+          node << 'EOF'
+          const fs = require("fs");
+          const path = require("path");
+          const releaseVersion = (process.env.RELEASE_VERSION || "").trim().replace(/^v/i, "").split("-")[0];
+          if (!/^\d+\.\d+\.\d+$/.test(releaseVersion)) {
+            throw new Error(`RELEASE_VERSION 无效: ${releaseVersion}`);
+          }
+          const iosRoot = path.resolve("ios");
+          const walk = (dir, result = []) => {
+            if (!fs.existsSync(dir)) return result;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              if (["Pods", "build"].includes(entry.name)) continue;
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full, result);
+              else result.push(full);
+            }
+            return result;
+          };
+          const projectFiles = walk(iosRoot).filter((file) => file.endsWith(".pbxproj"));
+          let projectCount = 0;
+          for (const projectPath of projectFiles) {
+            let project = fs.readFileSync(projectPath, "utf8");
+            const updated = project.replace(/MARKETING_VERSION\s*=\s*[^;]+;/g, `MARKETING_VERSION = ${releaseVersion};`);
+            if (updated !== project) {
+              fs.writeFileSync(projectPath, updated, "utf8");
+              projectCount++;
+            }
+          }
+          if (projectFiles.length === 0) throw new Error("Expo prebuild 后未找到 iOS .pbxproj");
+          console.log(`✅ 已锁定 iOS MARKETING_VERSION=${releaseVersion}（更新 ${projectCount} 个工程）`);
+          EOF
           # 关键修复：确保 Info.plist 中 100% 写入 UIAppFonts 与 ExpoShareIntoAppGroupId
           node << 'EOF'
           const fs = require("fs");
@@ -4933,6 +5002,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
+            MARKETING_VERSION="$RELEASE_VERSION" \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=NO \
             CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES \
@@ -4962,6 +5032,12 @@ jobs:
             exit 1
           fi
           echo "✅ 找到 App 路径: $APP_PATH"
+          BUILT_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Info.plist")
+          if [ "$BUILT_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "❌ App 版本不匹配：期望 $RELEASE_VERSION，实际 $BUILT_VERSION"
+            exit 1
+          fi
+          echo "✅ 已验证 IPA 应用版本: $BUILT_VERSION"
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           zip -r -y -q BBPlayer-unsigned.ipa Payload
