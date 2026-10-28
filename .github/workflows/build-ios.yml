@@ -4608,9 +4608,10 @@ jobs:
                 "import { Color } from 'expo-router'",
                 "import ColorJS from 'color'\nimport { Color } from 'expo-router'"
               );
+              // 注意：原函数体已声明 const d / const fallback，必须连同签名一起替换，否则会出现 "Identifier 'd' has already been declared"
               mc = mc.replace(
-                "export function buildMaterial3PaperColors(\n\tcolorScheme: ColorSchemeName,\n): MD3Colors {",
-                [
+                /export function buildMaterial3PaperColors\(\s*colorScheme: ColorSchemeName,?\s*\): MD3Colors \{\s*const d = Color\.android\.dynamic\s*const fallback =\s*colorScheme === 'dark' \? MD3DarkTheme\.colors : MD3LightTheme\.colors\s*/,
+                () => [
                   "export function buildMaterial3PaperColors(",
                   "  colorScheme: ColorSchemeName,",
                   "  customPrimaryColor?: string,",
@@ -4653,9 +4654,15 @@ jobs:
                   "        inversePrimary = c.lighten(0.3).hex()",
                   "      }",
                   "    } catch {}",
-                  "  }"
+                  "  }",
+                  "",
+                  "  "
                 ].join("\n")
               );
+              if (!mc.includes("customPrimaryColor?: string")) {
+                console.error("❌ material3Colors.ts 签名替换失败，上游源码可能已变更");
+                process.exit(1);
+              }
               mc = mc.replace(
                 "return {\n\t\tprimary: (d.primary as string) ?? fallback.primary,\n\t\tprimaryContainer:\n\t\t\t(d.primaryContainer as string) ?? fallback.primaryContainer,\n\t\tsecondary: (d.secondary as string) ?? fallback.secondary,\n\t\tsecondaryContainer:\n\t\t\t(d.secondaryContainer as string) ?? fallback.secondaryContainer,\n\t\ttertiary: (d.tertiary as string) ?? fallback.tertiary,",
                 "return {\n    primary,\n    primaryContainer,\n    secondary,\n    secondaryContainer,\n    tertiary: (d.tertiary as string) ?? fallback.tertiary,"
