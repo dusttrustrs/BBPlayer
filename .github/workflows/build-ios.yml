@@ -4721,6 +4721,76 @@ jobs:
             }
           }
 
+          // 39. 启动期致命 JS 错误诊断：拦截 ExceptionsManager.handleException 的 fatal 错误，
+          // 以非致命方式上报并弹窗展示错误详情（可复制），避免 expo-updates ErrorRecovery 直接 abort 闪退，
+          // 否则 .ips 崩溃日志中只有 ErrorRecovery.crash()，看不到真实的 JS 报错信息。
+          const fatalCatcherPath = "apps/mobile/src/lib/diagnostics/fatalErrorCatcher.ts";
+          fs.mkdirSync(path.dirname(fatalCatcherPath), { recursive: true });
+          fs.writeFileSync(fatalCatcherPath, [
+            "import * as Clipboard from 'expo-clipboard'",
+            "import { Alert } from 'react-native'",
+            "// @ts-ignore RN 内部模块无类型声明（Metro 可正常解析，expo 自身亦有同类深层导入）",
+            "import ExceptionsManager from 'react-native/Libraries/Core/ExceptionsManager'",
+            "import { hide as hideBootSplash } from 'react-native-bootsplash'",
+            "",
+            "let shown = false",
+            "",
+            "function formatError(e: unknown): string {",
+            "  if (e instanceof Error) {",
+            "    const extra = e as Error & { componentStack?: string }",
+            "    return [",
+            "      e.name + ': ' + e.message,",
+            "      (e.stack ?? '').split('\\n').slice(0, 15).join('\\n'),",
+            "      extra.componentStack ? 'Component stack:' + extra.componentStack.split('\\n').slice(0, 15).join('\\n') : '',",
+            "    ].filter(Boolean).join('\\n\\n')",
+            "  }",
+            "  return String(e)",
+            "}",
+            "",
+            "function showFatal(e: unknown) {",
+            "  if (shown) return",
+            "  shown = true",
+            "  const detail = formatError(e)",
+            "  try {",
+            "    void hideBootSplash().catch(() => {})",
+            "  } catch {}",
+            "  Alert.alert('BBPlayer 启动出错（诊断信息）', detail.slice(0, 3000), [",
+            "    { text: '复制错误信息', onPress: () => void Clipboard.setStringAsync(detail) },",
+            "    { text: '关闭', style: 'cancel' },",
+            "  ])",
+            "}",
+            "",
+            "const manager = ExceptionsManager as unknown as {",
+            "  handleException: (e: unknown, isFatal: boolean) => void",
+            "}",
+            "const originalHandleException = manager.handleException",
+            "manager.handleException = (e: unknown, isFatal: boolean) => {",
+            "  if (isFatal) {",
+            "    try {",
+            "      showFatal(e)",
+            "    } catch {}",
+            "  }",
+            "  // 以非致命方式继续上报（控制台 / Sentry），不触发 RCTFatal 与 expo-updates ErrorRecovery.crash()",
+            "  originalHandleException(e, false)",
+            "}",
+            "",
+          ].join("\n"), "utf8");
+          console.log("✅ 已写入 fatalErrorCatcher.ts 启动期致命错误诊断");
+
+          const entryIndexPath = "apps/mobile/index.js";
+          if (fs.existsSync(entryIndexPath)) {
+            let entryCode = fs.readFileSync(entryIndexPath, "utf8");
+            if (!entryCode.includes("fatalErrorCatcher")) {
+              // 必须是入口的第一个 import，确保在其它模块求值前完成拦截
+              entryCode = "import './src/lib/diagnostics/fatalErrorCatcher'\n" + entryCode;
+              fs.writeFileSync(entryIndexPath, entryCode, "utf8");
+              console.log("✅ 已在 index.js 首行注入 fatalErrorCatcher");
+            }
+          } else {
+            console.error("❌ 未找到 apps/mobile/index.js，无法注入启动期错误诊断");
+            process.exit(1);
+          }
+
           EOF
 
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
