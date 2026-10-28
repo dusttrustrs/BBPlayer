@@ -39,17 +39,13 @@ jobs:
         run: |
           echo "=== Runner 已安装的 Xcode 列表 ==="
           ls -d /Applications/Xcode*.app
-
           echo "=== Runner 已安装的 Simulator Runtimes ==="
           xcrun simctl list runtimes -v || true
-
           # 提取已安装的 Simulator Runtime Build 版本号集合
           INSTALLED_RUNTIMES=$(xcrun simctl list runtimes | grep -oE '[0-9]{2}[A-Z][0-9A-Za-z]+' || true)
-
           # 先检查当前默认 Xcode 的 SDKSettings.plist 是否已精确匹配 Runtime
           CURRENT_SDK_BUILD=$(xcrun --sdk iphonesimulator --show-sdk-build-version 2>/dev/null || echo "")
           echo "当前默认 Xcode iphonesimulator SDK Build: $CURRENT_SDK_BUILD"
-
           if [ -z "$CURRENT_SDK_BUILD" ] || ! echo "$INSTALLED_RUNTIMES" | grep -qx "$CURRENT_SDK_BUILD"; then
             echo "默认 Xcode SDK ($CURRENT_SDK_BUILD) 未精确匹配 Runtime，开始从高到低自动搜索匹配的 Xcode..."
             for xcode in $(ls -d /Applications/Xcode_*.app | sort -V -r); do
@@ -67,12 +63,10 @@ jobs:
           else
             echo "✅ 当前默认 Xcode 已与已安装的 Simulator Runtime ($CURRENT_SDK_BUILD) 100% 匹配"
           fi
-
           xcodebuild -version
           xcrun swiftc -version
           xcrun --sdk iphoneos --show-sdk-version
           xcrun --sdk iphonesimulator --show-sdk-build-version
-
       - name: 🟢 配置 Node.js
         uses: actions/setup-node@v4
         with:
@@ -88,12 +82,10 @@ jobs:
           LEFTHOOK: "0" # 跳过 Git Hook 安装
         run: |
           pnpm install --no-frozen-lockfile
-
       - name: 🩹 修复 ExpoOrpheus 在 iOS 26 SDK / Swift 6.3 下的编译错误
         run: |
           node << 'EOF'
           const fs = require("fs");
-
           // 1. 修复 AudioSpectrumAnalyzer.swift：
           // iOS 26 SDK 为 MTAudioProcessingTapCreate 添加了 CF_RETURNS_RETAINED 注解，
           // 第 4 个参数从 UnsafeMutablePointer<Unmanaged<MTAudioProcessingTap>?> 变为 UnsafeMutablePointer<MTAudioProcessingTap?>
@@ -121,7 +113,6 @@ jobs:
           } else if (!analyzer.includes("#if compiler(>=6.2)")) {
             throw new Error("未在 AudioSpectrumAnalyzer.swift 中找到待修复的 MTAudioProcessingTapCreate 代码块");
           }
-
           // 同时修复 DSPSplitComplex 临时指针作用域与 vDSP_vsmul(&magnitudes, ..., &magnitudes, ...) 的 Swift 内存独占访问冲突 (overlapping accesses to 'magnitudes')
           const dspPattern = /var splitComplex = DSPSplitComplex\(realp: &realOut, imagp: &imagOut\)[\s\S]*?vDSP_vsmul\(&magnitudes, 1, &scale, &magnitudes, 1, vDSP_Length\(fftSize\)\)/;
           if (dspPattern.test(analyzer)) {
@@ -146,7 +137,6 @@ jobs:
             throw new Error("未在 AudioSpectrumAnalyzer.swift 中找到待修复的 DSPSplitComplex / vDSP_vsmul 代码块");
           }
           fs.writeFileSync(analyzerPath, analyzer, "utf8");
-
           // 2. 修复 ExpoOrpheusModule.swift：
           // (a) 多语句 .set 闭包无法自动推断泛型参数 $0 的类型，需显式声明 (enabled: Bool) in
           const modulePath = "packages/orpheus/ios/ExpoOrpheusModule.swift";
@@ -166,7 +156,6 @@ jobs:
           } else if (!mod.includes("(enabled: Bool) in")) {
             throw new Error("未在 ExpoOrpheusModule.swift 中找到待修复的 isSpectrumVisualizerEnabled 代码块");
           }
-
           // (b) 修复 updateSpectrumData 中不存在的 TypedArray.getUnsafeMutablePointer 方法，
           // 改用 ExpoModulesCore 标准公开属性 destination.rawPointer.bindMemory(to:capacity:)
           const spectrumPattern = /Function\("updateSpectrumData"\)\s*\{\s*\(destination:\s*TypedArray\)\s*in[\s\S]*?fillSpectrumData\(destination:\s*ptr,\s*count:\s*count\)\s*\}\s*\}/;
@@ -184,7 +173,6 @@ jobs:
           } else if (!mod.includes("destination.rawPointer.bindMemory")) {
             throw new Error("未在 ExpoOrpheusModule.swift 中找到待修复的 updateSpectrumData 代码块");
           }
-
           // (c) 修复 iOS 端 setAllowSimultaneousPlayback 缺失导致的设置页闪退与后台混音失效
           if (!mod.includes("setAllowSimultaneousPlayback")) {
             const target = 'Function("setDownloadMaxParallelTasks") { (_: Int) in';
@@ -199,7 +187,6 @@ jobs:
             console.log("✅ 已为 ExpoOrpheusModule.swift 补充 setAllowSimultaneousPlayback 方法");
           }
           fs.writeFileSync(modulePath, mod, "utf8");
-
           // (d) 为 OrpheusPlayerManager.swift 补充 addToEnd / addToNext 的 onQueueChanged 通知
           const playerMgrPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
           if (fs.existsSync(playerMgrPath)) {
@@ -221,7 +208,6 @@ jobs:
               console.log("✅ 已为 OrpheusPlayerManager.swift 补充 addToEnd / addToNext 的 onQueueChanged 通知");
             }
           }
-
           // (e) 为 ExpoOrpheusModule.swift 补齐 iOS 端缺失的原生方法与属性（如 getLruCachedUris 等），防止运行时抛出 undefined is not a function
           if (!mod.includes("getLruCachedUris")) {
             // 补充缺失的属性：playbackResumeStrategy, isDesktopLyricsShown 等
@@ -262,7 +248,6 @@ jobs:
               '        Property("isSpectrumVisualizerEnabled")'
             ].join("\n");
             mod = mod.replace(propAnchor, missingProps);
-
             // 放宽 addToEnd 参数签名，避免参数转换失败
             const addToEndPattern = /AsyncFunction\("addToEnd"\)\s*\{\s*\(tracks:\s*\[Track\],\s*startFromId:\s*String\?,\s*clearQueue:\s*Bool\)\s*in/;
             if (addToEndPattern.test(mod)) {
@@ -272,7 +257,6 @@ jobs:
               );
               mod = mod.replace('clearQueue: clearQueue)', 'clearQueue: shouldClear)');
             }
-
             // 补充缺失的方法：getLruCachedUris, clearPlaybackCache, downloadMissingCovers 等
             const funcAnchor = 'Function("updateSpectrumData")';
             const missingFuncs = [
@@ -316,13 +300,11 @@ jobs:
             console.log("✅ 已为 ExpoOrpheusModule.swift 补全 getLruCachedUris 等缺失原生方法与属性");
           }
           EOF
-
       - name: 🩹 修复 iOS 运行时崩溃、播放器、后台播放与菜单弹窗组件异常
         run: |
           node << 'EOF'
           const fs = require("fs");
           const path = require("path");
-
           // 1. 修复 TabLayout 模块加载时的同步原生调用异常：
           // 引入 getSafeIcon 防御性封装，在捕获到任何异常时优雅回退为默认图标对象。
           const layoutPath = "apps/mobile/src/app/(tabs)/_layout.tsx";
@@ -350,7 +332,6 @@ jobs:
               console.log("✅ 已成功为 (tabs)/_layout.tsx 注入安全的 getSafeIcon 异常防护");
             }
           }
-
           // 2. 修复 app.config.ts：声明 UIAppFonts、ExpoShareIntoAppGroupId、UIBackgroundModes (audio) 与 enableSceneSupport (UIScene)
           // 彻底解决 iOS 字体缺失、共享 App Group 报错、后台播放被系统挂起以及 iOS 27 启动断言闪退问题。
           const configPath = "apps/mobile/app.config.ts";
@@ -383,7 +364,6 @@ jobs:
             fs.writeFileSync(configPath, cfg, "utf8");
             console.log("✅ 已向 app.config.ts 注入 NSAppTransportSecurity, UIAppFonts, ExpoShareIntoAppGroupId 与 UIBackgroundModes(audio)");
           }
-
           // 3. 修复 WavySlider 在 iOS 端的平滑拖动与原生触控 (彻底消除卡顿、跳跃与回弹)：
           const wavyPath = "packages/expo-wavy-slider/src/WavySlider.ts";
           if (fs.existsSync(wavyPath)) {
@@ -407,7 +387,6 @@ jobs:
                 "    })",
                 "  }"
               ].join("\n");
-
               const fallbackCode = [
                 "",
                 "function IOSSliderFallback(props: WavySliderProps) {",
@@ -430,13 +409,11 @@ jobs:
                 "  const thumbScale = useSharedValue(1)",
                 "  const startTouchXRef = useRef(0)",
                 "  const sliderWidthRef = useRef(0)",
-
                 "  const handleLayout = (e: any) => {",
                 "    const w = e.nativeEvent.layout.width",
                 "    setSliderWidth(w)",
                 "    sliderWidthRef.current = w",
                 "  }",
-
                 "  useAnimatedReaction(",
                 "    () => {",
                 "      'worklet'",
@@ -452,11 +429,9 @@ jobs:
                 "      }",
                 "    }",
                 "  )",
-
                 "  const activeColor = (colors?.activeTrackColor as string) || '#a855f7'",
                 "  const inactiveColor = (colors?.inactiveTrackColor as string) || 'rgba(150, 150, 150, 0.3)'",
                 "  const thumbColor = (colors?.thumbColor as string) || activeColor",
-
                 "  const panResponder = useMemo(",
                 "    () =>",
                 "      PanResponder.create({",
@@ -508,14 +483,12 @@ jobs:
                 "      }),",
                 "    [enabled, min, max, onValueChange, onValueChangeFinished, onDragStateChange]",
                 "  )",
-
                 "  const activeTrackStyle = useAnimatedStyle(() => {",
                 "    'worklet'",
                 "    const fraction = (localProgress.value - min) / (max - min || 1)",
                 "    const clamped = Math.max(0, Math.min(1, fraction))",
                 "    return { width: (`${clamped * 100}%` as any) }",
                 "  })",
-
                 "  const thumbStyle = useAnimatedStyle(() => {",
                 "    'worklet'",
                 "    const fraction = (localProgress.value - min) / (max - min || 1)",
@@ -528,9 +501,7 @@ jobs:
                 "      ]",
                 "    }",
                 "  })",
-
                 "  const thickness = typeof trackThickness === 'number' ? trackThickness : 4",
-
                 "  return createElement(",
                 "    View,",
                 "    {",
@@ -557,7 +528,6 @@ jobs:
                 "    })",
                 "  )",
                 "}",
-
                 "const iosSliderStyles = StyleSheet.create({",
                 "  container: { height: 32, justifyContent: 'center' },",
                 "  track: { width: '100%', borderRadius: 2, overflow: 'hidden' },",
@@ -577,7 +547,6 @@ jobs:
                 "  },",
                 "})"
               ].join("\n");
-
               wavy = wavy.replace(
                 "import { requireNativeView } from 'expo'",
                 [
@@ -592,7 +561,6 @@ jobs:
               console.log("✅ 已成功为 WavySlider 注入 iOS 专用的高帧率平滑触控滑动条 Fallback");
             }
           }
-
           // 4. 修复二级菜单与弹窗按钮无法点击的问题：
           // (a) apps/mobile/src/app/modal.tsx 中移除 <Portal>，防止弹窗内容被传送至透明原生 Screen 背后导致无法接收点击事件
           const modalPath = "apps/mobile/src/app/modal.tsx";
@@ -606,7 +574,6 @@ jobs:
               console.log("✅ 已修复 modal.tsx 中的 Portal 穿透与手势响应层");
             }
           }
-
           // (b) AnimatedModalOverlay.tsx 将背景 Pressable 改为同级兄弟节点，防止嵌套 Pressable + stopPropagation 拦截内部按钮点击
           const overlayPath = "apps/mobile/src/components/common/AnimatedModalOverlay.tsx";
           if (fs.existsSync(overlayPath)) {
@@ -654,7 +621,6 @@ jobs:
               console.log("✅ 已修复 AnimatedModalOverlay.tsx 遮罩层点击穿透与事件隔离并清理未使用的 AnimatedPressable");
             }
           }
-
           // (c) Button.tsx 与 IconButton.tsx 改用 React Native 原生 Pressable，消除 RNGH Touchable 在 iOS Modal 页面中的失效问题
           for (const btnRelative of ["apps/mobile/src/components/common/Button.tsx", "apps/mobile/src/components/common/IconButton.tsx"]) {
             if (fs.existsSync(btnRelative)) {
@@ -666,7 +632,6 @@ jobs:
               }
             }
           }
-
           // 5. 修复扫码登录页“在 Bilibili 客户端打开”优先唤起原生客户端授权
           const qrLoginPath = "apps/mobile/src/app/settings/bilibili-account/qrcode-login.tsx";
           if (fs.existsSync(qrLoginPath)) {
@@ -696,12 +661,10 @@ jobs:
               }
             }
           }
-
           // 6. 防御性修复 expo-sharing：避免缺失 App Group 时抛出 FailedToResolveAppGroupIdException 导致首页崩溃
           try {
             const sharePkg = require.resolve("expo-sharing/package.json", { paths: ["apps/mobile"] });
             const shareDir = path.dirname(sharePkg);
-
             // 修补 JS 端 useIncomingShare hook：避免顶层 useState(getSharedPayloads()) 同步抛错
             const hookPath = path.join(shareDir, "build/useIncomingShare.js");
             if (fs.existsSync(hookPath)) {
@@ -712,7 +675,6 @@ jobs:
                 console.log("✅ 已修补 expo-sharing/useIncomingShare.js");
               }
             }
-
             // 修补原生端 SharingModule.swift：未配置 App Group 时优雅返回，避免中断执行
             const swiftPath = path.join(shareDir, "ios/SharingModule.swift");
             if (fs.existsSync(swiftPath)) {
@@ -726,7 +688,6 @@ jobs:
           } catch (e) {
             console.warn("⚠️ expo-sharing 防御修补警告:", e.message);
           }
-
           // 7. 防御性修复音乐库与单曲详情页：防止 Orpheus.getLruCachedUris 未定义时抛错
           const playlistDetailPath = "apps/mobile/src/app/playlist/local/[id].tsx";
           if (fs.existsSync(playlistDetailPath)) {
@@ -739,7 +700,6 @@ jobs:
               console.log("✅ 已为 playlist/local/[id].tsx 注入 getLruCachedUris 防御性守卫");
             }
           }
-
           const localPlayerHookPath = "apps/mobile/src/features/playlist/local/hooks/useLocalPlaylistPlayer.ts";
           if (fs.existsSync(localPlayerHookPath)) {
             let hook = fs.readFileSync(localPlayerHookPath, "utf8");
@@ -751,7 +711,6 @@ jobs:
               console.log("✅ 已为 useLocalPlaylistPlayer.ts 注入 getLruCachedUris 防御性守卫");
             }
           }
-
           // 8. 防御性修复 expo-router useScreens：防止组件加载返回 undefined 时解构 ErrorBoundary 崩溃
           try {
             const routerPkg = require.resolve("expo-router/package.json", { paths: ["apps/mobile"] });
@@ -771,7 +730,6 @@ jobs:
           } catch (e) {
             console.warn("⚠️ expo-router useScreens 防御修补警告:", e.message);
           }
-
           // 9. 修复倍速弹窗在 iOS 端因引入 @expo/ui/jetpack-compose 导致 undefined is not a function 报错
           const speedModalPath = "apps/mobile/src/components/modals/player/PlaybackSpeedModal.tsx";
           if (fs.existsSync(speedModalPath)) {
@@ -964,7 +922,6 @@ jobs:
             fs.writeFileSync(speedModalPath, speedModalCode, "utf8");
             console.log("✅ 已成功将 PlaybackSpeedModal.tsx 改造为原生全平台平滑倍速触控组件与预设切换组");
           }
-
           // 10. 防御性修复 @expo/ui/jetpack-compose colors：避免在 iOS 端调用未定义的 ExpoUIModule.getMaterialColors
           try {
             const uiPkg = require.resolve("@expo/ui/package.json", { paths: ["apps/mobile"] });
@@ -987,7 +944,6 @@ jobs:
           } catch (e) {
             console.warn("⚠️ @expo/ui colors 防御修补警告:", e.message);
           }
-
           // 11. 开启 iOS 灵动岛系统动画、后台控制与音频中断互斥联动：
           // (a) 在主线程调用 UIApplication.shared.beginReceivingRemoteControlEvents() 注册系统控制权；
           // (b) 每次播放状态变化时，显式同步 MPNowPlayingInfoCenter.default().playbackState (.playing / .paused)，
@@ -1222,7 +1178,6 @@ jobs:
               console.log("✅ 已配置 OrpheusPlayerManager.swift 支持系统灵动岛飞入动画与 NowPlaying 同步");
             }
           }
-
           // 12. 修复歌曲评论区界面 UI 错位与居中对齐：
           // 将返回按钮移至左上方（与下方评论列表的头像左对齐），标题“评论区”居中对齐并添加对称占位。
           const commentsBvidPath = "apps/mobile/src/app/comments/[bvid].tsx";
@@ -1253,7 +1208,6 @@ jobs:
             fs.writeFileSync(commentsReplyPath, replyCode, "utf8");
             console.log("✅ 已修复 reply.tsx 评论回复返回按钮左对齐与标题居中");
           }
-
           // 13. 修复音乐库合集/收藏夹详情页导航栏对齐问题：
           // 返回按钮移至最左侧并与屏幕左对齐，歌单名称标题居中显示。
           const collPagePath = "apps/mobile/src/app/playlist/remote/collection/[id].tsx";
@@ -1330,7 +1284,6 @@ jobs:
             fs.writeFileSync(collPagePath, collCode, "utf8");
             console.log("✅ 已修复 collection/[id].tsx 合集详情页返回按钮左对齐与标题居中");
           }
-
           const favPagePath = "apps/mobile/src/app/playlist/remote/favorite/[id].tsx";
           if (fs.existsSync(favPagePath)) {
             let favCode = fs.readFileSync(favPagePath, "utf8");
@@ -1391,7 +1344,6 @@ jobs:
             fs.writeFileSync(favPagePath, favCode, "utf8");
             console.log("✅ 已修复 favorite/[id].tsx 收藏夹详情页返回按钮左对齐与标题居中");
           }
-
           // 修复“稍后再看”页面顶栏 UI 错误：返回按钮移至最左侧贴边，标题居中
           const toviewPath = "apps/mobile/src/app/playlist/remote/toview.tsx";
           if (fs.existsSync(toviewPath)) {
@@ -1464,7 +1416,6 @@ jobs:
             fs.writeFileSync(toviewPath, toviewCode, "utf8");
             console.log("✅ 已修复 toview.tsx 稍后再看顶栏返回按钮贴左与标题居中");
           }
-
           // 修复全局搜索结果页面顶栏 UI 错误：返回按钮移至最左侧贴边，标题居中
           const searchGlobalPath = "apps/mobile/src/app/playlist/remote/search-result/global/[query].tsx";
           if (fs.existsSync(searchGlobalPath)) {
@@ -1515,7 +1466,6 @@ jobs:
             fs.writeFileSync(searchGlobalPath, searchGlobalCode, "utf8");
             console.log("✅ 已修复 search-result/global/[query].tsx 顶栏返回按钮贴左与标题居中");
           }
-
           // 修复收藏夹搜索结果页面顶栏 UI 错误：返回按钮移至最左侧贴边，标题居中
           const searchFavPath = "apps/mobile/src/app/playlist/remote/search-result/fav/[query].tsx";
           if (fs.existsSync(searchFavPath)) {
@@ -1566,7 +1516,6 @@ jobs:
             fs.writeFileSync(searchFavPath, searchFavCode, "utf8");
             console.log("✅ 已修复 search-result/fav/[query].tsx 顶栏返回按钮贴左与标题居中");
           }
-
           // 14. 优化“我的”界面底部可下拉滚动区域：
           // 增加底部内边距（从 86 提升至 180），确保“那月今日”不会被底栏歌曲播放条遮挡。
           const myTabPath = "apps/mobile/src/app/(tabs)/my.tsx";
@@ -1579,7 +1528,6 @@ jobs:
             fs.writeFileSync(myTabPath, myTabCode, "utf8");
             console.log("✅ 已增大 (tabs)/my.tsx 底部滚动安全间距以避免遮挡那月今日");
           }
-
           // 15. 将检查更新替换为 dusttrustrs/BBPlayer-iOS-Package 的 GitHub Release 更新源：
           // 同步版本号为 1.0.0，从 GitHub 官方 Releases API 拉取最新发行说明与链接。
           const updateSvcPath = "apps/mobile/src/lib/services/updateService.ts";
@@ -1626,7 +1574,6 @@ jobs:
             fs.writeFileSync(updateSvcPath, updateSvcCode, "utf8");
             console.log("✅ 已配置 updateService.ts 指向 GitHub Release API 更新源");
           }
-
           const mobilePkgPath = "apps/mobile/package.json";
           if (fs.existsSync(mobilePkgPath)) {
             const pkgData = JSON.parse(fs.readFileSync(mobilePkgPath, "utf8"));
@@ -1634,7 +1581,6 @@ jobs:
             fs.writeFileSync(mobilePkgPath, JSON.stringify(pkgData, null, 2) + "\n", "utf8");
             console.log("✅ 已同步 apps/mobile/package.json 版本号为 1.0.0 (匹配 iOS 发布版)");
           }
-
           const appConfigPath = "apps/mobile/app.config.ts";
           if (fs.existsSync(appConfigPath)) {
             let appCfgCode = fs.readFileSync(appConfigPath, "utf8");
@@ -1646,7 +1592,6 @@ jobs:
             fs.writeFileSync(appConfigPath, appCfgCode, "utf8");
             console.log("✅ 已配置 app.config.ts updateManifestUrl");
           }
-
           // 16. 修复歌曲播放界面“定时关闭”弹窗尺寸过大与预设选项未显示的问题：
           const sleepModalPath = "apps/mobile/src/components/modals/player/SleepTimerModal.tsx";
           if (fs.existsSync(sleepModalPath)) {
@@ -1882,8 +1827,6 @@ jobs:
             fs.writeFileSync(sleepModalPath, sleepModalCode, "utf8");
             console.log("✅ 已成功重构 SleepTimerModal.tsx 定时关闭弹窗尺寸与 15/30/45/60 分钟预设布局");
           }
-
-
           // 17. 为单曲点击与选项交互添加类似 Flutter 光晕从中间往两边扩散的微动效：
           const localItemPath = "apps/mobile/src/features/playlist/local/components/LocalPlaylistItem.tsx";
           if (fs.existsSync(localItemPath)) {
@@ -1942,7 +1885,6 @@ jobs:
               console.log("✅ 已为 LocalPlaylistItem.tsx 添加 Flutter 风格单曲点击光晕扩散动效");
             }
           }
-
           const remoteItemPath = "apps/mobile/src/features/playlist/remote/components/PlaylistItem.tsx";
           if (fs.existsSync(remoteItemPath)) {
             let remoteItem = fs.readFileSync(remoteItemPath, "utf8");
@@ -2000,7 +1942,6 @@ jobs:
               console.log("✅ 已为 PlaylistItem.tsx 添加 Flutter 风格单曲点击光晕扩散动效与 Animated 依赖导入");
             }
           }
-
           const btnPath = "apps/mobile/src/components/common/Button.tsx";
           if (fs.existsSync(btnPath)) {
             let btnCode = fs.readFileSync(btnPath, "utf8");
@@ -2057,7 +1998,6 @@ jobs:
               console.log("✅ 已为 Button.tsx 选项与按钮添加点击光晕扩散动效");
             }
           }
-
           // 18. 在「我的-设置-播放」中添加「点击单曲时直接进入播放界面」与「系统控制中心与灵动岛联动（独占播放）」选项（默认均开启）：
           const appStoreTypesPath = "apps/mobile/src/types/core/appStore.ts";
           if (fs.existsSync(appStoreTypesPath)) {
@@ -2071,7 +2011,6 @@ jobs:
               console.log("✅ 已在 appStore.ts 中声明 openPlayerOnTrackPress 与 enableSystemMediaControl 配置项");
             }
           }
-
           const useAppStorePath = "apps/mobile/src/hooks/stores/useAppStore.ts";
           if (fs.existsSync(useAppStorePath)) {
             let useAppStoreCode = fs.readFileSync(useAppStorePath, "utf8");
@@ -2095,7 +2034,6 @@ jobs:
             fs.writeFileSync(useAppStorePath, useAppStoreCode, "utf8");
             console.log("✅ 已在 useAppStore.ts 中配置 openPlayerOnTrackPress 与 enableSystemMediaControl");
           }
-
           const layoutAppPath = "apps/mobile/src/app/_layout.tsx";
           if (fs.existsSync(layoutAppPath)) {
             let layoutAppCode = fs.readFileSync(layoutAppPath, "utf8");
@@ -2108,7 +2046,6 @@ jobs:
               console.log("✅ 已在 _layout.tsx 中初始化 enableSystemMediaControl 状态");
             }
           }
-
           const playbackSettingsPath = "apps/mobile/src/app/settings/playback.tsx";
           if (fs.existsSync(playbackSettingsPath)) {
             let playbackCode = fs.readFileSync(playbackSettingsPath, "utf8");
@@ -2183,7 +2120,6 @@ jobs:
               console.log("✅ 已在 settings/playback.tsx 中添加控制中心联动与单曲点击直接播放设置项");
             }
           }
-
           const storageSettingsPath = "apps/mobile/src/app/settings/storage.tsx";
           if (fs.existsSync(storageSettingsPath)) {
             let storageCode = fs.readFileSync(storageSettingsPath, "utf8");
@@ -2223,7 +2159,6 @@ jobs:
               console.log("✅ 已在 storage.tsx 中添加仅下载音频文件开关");
             }
           }
-
           const playerUtilPath = "apps/mobile/src/utils/player.ts";
           if (fs.existsSync(playerUtilPath)) {
             let playerUtil = fs.readFileSync(playerUtilPath, "utf8");
@@ -2272,7 +2207,6 @@ jobs:
               console.log("✅ 已在 [id].tsx 中为 LocalTrackList 传入 onDeleteTrack 属性");
             }
           }
-
           const trackListPath = "apps/mobile/src/features/playlist/local/components/LocalTrackList.tsx";
           if (fs.existsSync(trackListPath)) {
             let trackListCode = fs.readFileSync(trackListPath, "utf8");
@@ -2410,7 +2344,6 @@ jobs:
               console.log("✅ 已在 LocalTrackList.tsx 中实现向左滑动移除歌曲选项");
             }
           }
-
           // 20. 修复播放队列 (PlayerQueueModal.tsx) 优化左滑删除、移除叉号图标并在删除按钮内显示垃圾桶图标：
           const queueModalPath = "apps/mobile/src/components/modals/PlayerQueueModal.tsx";
           if (fs.existsSync(queueModalPath)) {
@@ -2556,7 +2489,6 @@ jobs:
               "TrackItem.displayName = 'TrackItem'"
             ].join("\n");
             queueModal = queueModal.replace(oldTrackItemRegex, newTrackItem);
-
             const oldRemoveTrack = /const removeTrackHandler = useCallback\(async \(index: number\) => {[\s\S]*?}, \[\]\)/;
             const newRemoveTrack = [
               "const removeTrackHandler = useCallback(async (index: number) => {",
@@ -2572,11 +2504,9 @@ jobs:
               "  }, [])"
             ].join("\n");
             queueModal = queueModal.replace(oldRemoveTrack, newRemoveTrack);
-
             fs.writeFileSync(queueModalPath, queueModal, "utf8");
             console.log("✅ 已在 PlayerQueueModal.tsx 中修复删除按钮并实现 iOS 原生左滑删除曲目");
           }
-
           // 21. 修复侧滑返回上一级界面时最左侧出现白边问题与开屏闪退：
           const rootLayoutPath = "apps/mobile/src/app/_layout.tsx";
           if (fs.existsSync(rootLayoutPath)) {
@@ -2685,7 +2615,6 @@ jobs:
             fs.writeFileSync(providersPath, providersCode, "utf8");
             console.log("✅ 已在 providers.tsx 中注入 NavigationThemeProvider 与根容器主题背景色");
           }
-
                     // 23. 修复音乐播放界面进度条拖拽与滑动切换歌词手势冲突 (彻底避免任何违规改写 panGestureRecognizer.delegate 导致 iOS 27 闪退)：
           // 原理：通过 Legend-State 响应式状态 playerSliderDragging$ 联动 PagerView 的 scrollEnabled 属性。
           // 当手指在进度条拖拽时，PagerView 自动暂停横向切页响应；松手后立即恢复，杜绝手势竞争且 100% 原生安全无崩溃。
@@ -2701,7 +2630,6 @@ jobs:
               console.log("✅ 已向 playbackContextStore.ts 注入 playerSliderDragging$ 状态");
             }
           }
-
           const playerSliderPath = "apps/mobile/src/features/player/components/main/PlayerSlider.tsx";
           if (fs.existsSync(playerSliderPath)) {
             let playerSlider = fs.readFileSync(playerSliderPath, "utf8");
@@ -2739,7 +2667,6 @@ jobs:
             fs.writeFileSync(playerSliderPath, playerSlider, "utf8");
             console.log("✅ 已在 PlayerSlider.tsx 中绑定 playerSliderDragging$ 与动态禁用返回手势");
           }
-
           const playerPagePath = "apps/mobile/src/app/player.tsx";
           if (fs.existsSync(playerPagePath)) {
             let playerPage = fs.readFileSync(playerPagePath, "utf8");
@@ -2756,7 +2683,6 @@ jobs:
               console.log("✅ 已在 player.tsx 中为 AnimatedPagerView 绑定 !playerSliderDragging$.get() 互斥");
             }
           }
-
           try {
             const pagerPkgPath = require.resolve("react-native-pager-view/package.json", { paths: ["apps/mobile"] });
             const pagerIosDir = path.join(path.dirname(pagerPkgPath), "ios");
@@ -2775,7 +2701,6 @@ jobs:
           } catch (e) {
             console.warn("⚠️ react-native-pager-view 修补警告:", e.message);
           }
-
           // 24. 彻底消除二级界面返回一级界面对应的侧边白边（为底层 UIWindow、rootView、RNSScreenStack、RNSScreen、RNSScreenStackAnimator、RCTTabViewComponentView 与 Tabs 补齐原生深浅色动态底色）：
           // (1) react-native-screens: RNSScreenStack.mm, RNSScreen.mm, RNSScreenStackAnimator.mm
           try {
@@ -2861,7 +2786,6 @@ jobs:
               fs.writeFileSync(rnsStackMm, stackMm, "utf8");
               console.log("✅ 已为 RNSScreenStack.mm 补齐原生深浅色动态底色，消除侧滑白边");
             }
-
             const rnsScreenMm = path.join(rnsDir, "RNSScreen.mm");
             if (fs.existsSync(rnsScreenMm)) {
               let screenMm = fs.readFileSync(rnsScreenMm, "utf8");
@@ -2878,7 +2802,6 @@ jobs:
                 console.log("✅ 已为 RNSScreen.mm 补齐 screenView 与 screenController 动态底色");
               }
             }
-
             const rnsAnimatorMm = path.join(rnsDir, "RNSScreenStackAnimator.mm");
             if (fs.existsSync(rnsAnimatorMm)) {
               let animMm = fs.readFileSync(rnsAnimatorMm, "utf8");
@@ -2894,7 +2817,6 @@ jobs:
           } catch (e) {
             console.warn("⚠️ react-native-screens 原生修补警告:", e.message);
           }
-
           // (2) react-native-bottom-tabs: RCTTabViewComponentView.mm, TabViewProvider.swift, TabViewImpl.swift
           try {
             const rctTabMm = "packages/react-native-bottom-tabs/ios/RCTTabViewComponentView.mm";
@@ -2909,7 +2831,6 @@ jobs:
                 console.log("✅ 已为 RCTTabViewComponentView.mm 补齐原生动态底色");
               }
             }
-
             const tabProviderSwift = "packages/react-native-bottom-tabs/ios/TabViewProvider.swift";
             if (fs.existsSync(tabProviderSwift)) {
               let provSwift = fs.readFileSync(tabProviderSwift, "utf8");
@@ -2922,7 +2843,6 @@ jobs:
                 console.log("✅ 已为 TabViewProvider.swift 补齐 HostingController 与 view 动态底色");
               }
             }
-
             const tabImplSwift = "packages/react-native-bottom-tabs/ios/TabViewImpl.swift";
             if (fs.existsSync(tabImplSwift)) {
               let implSwift = fs.readFileSync(tabImplSwift, "utf8");
@@ -2938,7 +2858,6 @@ jobs:
           } catch (e) {
             console.warn("⚠️ react-native-bottom-tabs 原生修补警告:", e.message);
           }
-
           // (3) ExpoAppSceneDelegate.swift
           try {
             const expoPkg = require.resolve("expo/package.json", { paths: ["apps/mobile"] });
@@ -2961,7 +2880,6 @@ jobs:
           } catch (e) {
             console.warn("⚠️ ExpoAppSceneDelegate 修补警告:", e.message);
           }
-
           // (4) Tabs layout: sceneStyle + style
           const tabsLayoutPath = "apps/mobile/src/app/(tabs)/_layout.tsx";
           if (fs.existsSync(tabsLayoutPath)) {
@@ -2979,7 +2897,6 @@ jobs:
               console.log("✅ 已在 (tabs)/_layout.tsx 中为 Tabs 补齐 screenOptions.sceneStyle 与 style 背景色");
             }
           }
-
           // 25. 增强 Now Playing 元数据与保底封面，确保退出主界面时触发系统原生灵动岛飞入与融合动画：
           const orpheusManagerPath = "packages/orpheus/ios/OrpheusPlayerManager.swift";
           if (fs.existsSync(orpheusManagerPath)) {
@@ -3062,7 +2979,6 @@ jobs:
               console.log("✅ 已在 OrpheusPlayerManager.swift 中增强 Now Playing 元数据与保底封面，确保触发灵动岛飞入动画");
             }
           }
-
           // 22. 修复评论区图片显示一片空白问题：
           const imgUrlPath = "apps/mobile/src/utils/imageUrl.ts";
           if (fs.existsSync(imgUrlPath)) {
@@ -3461,7 +3377,6 @@ jobs:
                 "          )}"
               ].join("\n");
               commentCode = commentCode.replace(oldPicturesBlock, newPicturesBlock);
-
               const viewerStyles = [
                 "  viewerModalContainer: {",
                 "    flex: 1,",
@@ -3520,7 +3435,6 @@ jobs:
             fs.writeFileSync(commentItemPath, commentCode, "utf8");
             console.log("✅ 已在 CommentItem.tsx 中实现评论区图片手势切换、双指缩放与保存图片");
           }
-
           // 34. 支持仅下载音频选项（去除画面以大幅缩减体积）并联动 ExpoOrpheusModule / BilibiliApi：
           const expoOrpheusSwiftPath = "packages/orpheus/ios/ExpoOrpheusModule.swift";
           if (fs.existsSync(expoOrpheusSwiftPath)) {
@@ -3711,7 +3625,6 @@ jobs:
               console.log("✅ 已在 OrpheusDownloadManager.swift 中实现纯音频处理与 Music 目录同步");
             }
           }
-
           // 27. 在已下载界面 (downloaded.tsx) 中支持 iOS 单曲与批量音频导出、系统分享：
           const downloadedPath = "apps/mobile/src/app/downloaded.tsx";
           if (fs.existsSync(downloadedPath)) {
@@ -3774,7 +3687,6 @@ jobs:
               "  )"
             ].join("\n");
             dlPageCode = dlPageCode.replace(oldSingleExport, newSingleExport);
-
             const oldHandleExport = /const handleExport = async \(\) => {[\s\S]*?void exportSheetRef\.current\?\.present\(\)\s*if \(selectMode\) {\s*exitSelectMode\(\)\s*}\s*}\s*}/;
             const newHandleExport = [
               "const handleExport = async () => {",
@@ -3793,7 +3705,6 @@ jobs:
               "      }",
               "      return",
               "    }",
-
               "    if (Platform.OS === 'ios') {",
               "      try {",
               "        const exportDir = `${FileSystem.documentDirectory}Music/`",
@@ -3801,7 +3712,6 @@ jobs:
               "        if (!dirInfo.exists) {",
               "          await FileSystem.makeDirectoryAsync(exportDir, { intermediates: true })",
               "        }",
-
               "        let successCount = 0",
               "        let lastExportUri = ''",
               "        for (const id of idsToExport) {",
@@ -3813,7 +3723,6 @@ jobs:
               "            .trim()",
               "          const sourceUri = `${FileSystem.documentDirectory}downloads/${id}.mp4`",
               "          const exportUri = `${exportDir}${safeTitle}.m4a`",
-
               "          const fileInfo = await FileSystem.getInfoAsync(sourceUri)",
               "          if (fileInfo.exists) {",
               "            await FileSystem.copyAsync({ from: sourceUri, to: exportUri })",
@@ -3821,11 +3730,9 @@ jobs:
               "            lastExportUri = exportUri",
               "          }",
               "        }",
-
               "        if (selectMode) {",
               "          exitSelectMode()",
               "        }",
-
               "        if (successCount === 1 && lastExportUri && (await Sharing.isAvailableAsync())) {",
               "          await Sharing.shareAsync(lastExportUri, {",
               "            mimeType: 'audio/mp4',",
@@ -3858,7 +3765,6 @@ jobs:
               "      }",
               "      return",
               "    }",
-
               "    const directoryUri = await resolveExportDestination()",
               "    if (directoryUri) {",
               "      setExportConfig({ ids: idsToExport, destinationUri: directoryUri })",
@@ -3873,7 +3779,6 @@ jobs:
             fs.writeFileSync(downloadedPath, dlPageCode, "utf8");
             console.log("✅ 已在 downloaded.tsx 中实现 iOS 单曲与批量导出音频");
           }
-
           // 28. 修复音乐播放界面点击下载无响应、下载队列为空的问题：
           const orpheusDmPath = "packages/orpheus/ios/OrpheusDownloadManager.swift";
           if (fs.existsSync(orpheusDmPath)) {
@@ -3956,7 +3861,6 @@ jobs:
                 "        notifyUpdate(id: track.id, state: .downloading, track: track)",
                 "    }"
               ].join("\n");
-
               const newDmBlock = [
                 "    func downloadTrack(track: Track) {",
                 "        // Pre-register task state in memory and storage so it appears immediately",
@@ -3974,7 +3878,6 @@ jobs:
                 "            startDownload(url: urlString, track: track)",
                 "        }",
                 "    }",
-
                 "    func resumeDownload(id: String) {",
                 "        guard let track = stateQueue.sync(execute: { trackMap[id] }) else { return }",
                 "        downloadTrack(track: track)",
@@ -4025,7 +3928,6 @@ jobs:
                 "            }",
                 "        }",
                 "    }",
-
                 "    private func markTaskFailed(track: Track) {",
                 "        stateQueue.sync {",
                 "            downloadTasks[track.id] = .failed",
@@ -4080,7 +3982,6 @@ jobs:
                 "        notifyUpdate(id: track.id, state: .downloading, track: track)",
                 "    }"
               ].join("\n");
-
               if (!dmCode.includes(oldDmBlock)) {
                 console.error("❌ OrpheusDownloadManager.swift: 下载任务即时注册补丁未匹配（源码已变化）");
                 process.exit(1);
@@ -4090,7 +3991,6 @@ jobs:
               console.log("✅ 已在 OrpheusDownloadManager.swift 中修复下载前即时注册任务与缺失 cid 时的自动解析");
             }
           }
-
           // 29. 修复 utils/player.ts 中 getInternalPlayUri 只要存在 cid 即附带 cid 参数：
           const playerUtilFixPath = "apps/mobile/src/utils/player.ts";
           if (fs.existsSync(playerUtilFixPath)) {
@@ -4116,7 +4016,6 @@ jobs:
               console.log("✅ 已在 utils/player.ts 中支持存在 cid 时自动附加播放参数");
             }
           }
-
           // 30. 修复 PlayerMenuContent.tsx 与 useLocalPlaylistMenu.ts 下载触发后即时刷新下载状态：
           const menuContentPath = "apps/mobile/src/features/player/components/menu/PlayerMenuContent.tsx";
           if (fs.existsSync(menuContentPath)) {
@@ -4156,7 +4055,6 @@ jobs:
               console.log("✅ 已在 PlayerMenuContent.tsx 中加入下载队列即时刷新与状态同步");
             }
           }
-
           const localMenuPath = "apps/mobile/src/features/playlist/local/hooks/useLocalPlaylistMenu.ts";
           if (fs.existsSync(localMenuPath)) {
             let lmCode = fs.readFileSync(localMenuPath, "utf8");
@@ -4192,7 +4090,6 @@ jobs:
               console.log("✅ 已在 useLocalPlaylistMenu.ts 中加入下载队列即时刷新与状态同步");
             }
           }
-
           // 32. 为搜索结果与远程歌单二级菜单补充「下载」选项：
           const searchInteractionsPath = "apps/mobile/src/features/playlist/remote/search-result/hooks/useSearchInteractions.ts";
           if (fs.existsSync(searchInteractionsPath)) {
@@ -4260,7 +4157,6 @@ jobs:
               console.log("✅ 已在 useSearchInteractions.ts 中为搜索结果二级菜单添加下载选项");
             }
           }
-
           const remotePlaylistMenuPath = "apps/mobile/src/features/playlist/remote/hooks/usePlaylistMenu.ts";
           if (fs.existsSync(remotePlaylistMenuPath)) {
             let pmCode = fs.readFileSync(remotePlaylistMenuPath, "utf8");
@@ -4327,7 +4223,6 @@ jobs:
               console.log("✅ 已在 usePlaylistMenu.ts 中为远程歌单二级菜单添加下载选项");
             }
           }
-
           // 33. 为音乐播放栏添加缓慢向上淡入/缓慢向下淡出效果与回弹弹簧动画，修复左滑返回后播放条消失：
           const nowPlayingBarPath = "apps/mobile/src/components/NowPlayingBar.tsx";
           if (fs.existsSync(nowPlayingBarPath)) {
@@ -4460,7 +4355,6 @@ jobs:
               console.log("✅ 已在 NowPlayingBar.tsx 中注入缓慢向上淡入带回弹/缓慢向下淡出动画与手势保护");
             }
           }
-
           // 35. 修复歌词搜索 Kugou ATS (NSURLErrorDomain -1022) 报错与静默降级：
           const kugouApiPath = "apps/mobile/src/lib/api/kugou/api.ts";
           if (fs.existsSync(kugouApiPath)) {
@@ -4480,7 +4374,6 @@ jobs:
             fs.writeFileSync(kugouApiPath, kgCode, "utf8");
             console.log("✅ 已将 KugouApi 歌词与歌曲搜索接口升级为 HTTPS");
           }
-
           const lyricsSearchPath = "apps/mobile/src/hooks/queries/lyrics/index.ts";
           if (fs.existsSync(lyricsSearchPath)) {
             let lyricCode = fs.readFileSync(lyricsSearchPath, "utf8");
@@ -4493,7 +4386,6 @@ jobs:
               console.log("✅ 已为 manualSearch 歌词查询添加 meta: { silent: true } 防护");
             }
           }
-
           // 36. 优化更新提示弹窗（UpdateAppModal.tsx）：固定高度窗口滚动与跳过版本提示
           const updateModalPath = "apps/mobile/src/components/modals/app/UpdateAppModal.tsx";
           if (fs.existsSync(updateModalPath)) {
@@ -4557,7 +4449,6 @@ jobs:
               console.log("✅ 已在 UpdateAppModal.tsx 中实现固定高度滚动窗口与跳过版本提示");
             }
           }
-
           // 37. 音乐库装扮背景与栏目位置贴合：将各个栏目和指示分割线整体向上移动匹配装扮背景
           const skinBgPath = "apps/mobile/src/components/navigation/SkinAppbarBackground.tsx";
           if (fs.existsSync(skinBgPath)) {
@@ -4579,7 +4470,6 @@ jobs:
               console.log("✅ 已在 SkinAppbarBackground 中支持自定义 fadeHeight");
             }
           }
-
           const libraryTabPath = "apps/mobile/src/app/(tabs)/library/[tab].tsx";
           if (fs.existsSync(libraryTabPath)) {
             let libCode = fs.readFileSync(libraryTabPath, "utf8");
@@ -4608,7 +4498,6 @@ jobs:
               console.log("✅ 已在 library/[tab].tsx 中调整栏目与分割线位置紧贴装扮背景");
             }
           }
-
           // 38. 在「设置-外观与主题」中添加全局自定义主题色（预设红橙黄绿蓝靛紫与调色盘弹窗），保留深色/浅色背景
           const matColorsPath = "apps/mobile/src/lib/theme/material3Colors.ts";
           if (fs.existsSync(matColorsPath)) {
@@ -4689,21 +4578,18 @@ jobs:
               console.log("✅ 已在 material3Colors.ts 中实现自定义主题色支持");
             }
           }
-
           const themePickerPath = "apps/mobile/src/features/theme/ThemeColorPickerModal.tsx";
           if (!fs.existsSync(themePickerPath)) {
             fs.mkdirSync(path.dirname(themePickerPath), { recursive: true });
             fs.writeFileSync(themePickerPath, "import { Slider } from '@expo/ui/community/slider'\nimport Color from 'color'\nimport { LinearGradient } from 'expo-linear-gradient'\nimport { useEffect, useState } from 'react'\nimport {\n\tKeyboardAvoidingView,\n\tPlatform,\n\tPressable,\n\tScrollView,\n\tStyleSheet,\n\tView,\n} from 'react-native'\nimport {\n\tButton,\n\tDialog,\n\tHelperText,\n\tPortal,\n\tText,\n\tTextInput,\n\tuseTheme,\n} from 'react-native-paper'\n\ninterface ThemeColorPickerModalProps {\n\tvisible: boolean\n\tcurrentColor?: string\n\tonDismiss: () => void\n\tonSelect: (hex: string) => void\n}\n\nconst PALETTE_SWATCHES = [\n\t'#F44336', // 红\n\t'#E91E63', // 粉\n\t'#9C27B0', // 紫\n\t'#673AB7', // 深紫\n\t'#3F51B5', // 靛\n\t'#2196F3', // 蓝\n\t'#03A9F4', // 天蓝\n\t'#00BCD4', // 青\n\t'#009688', // 墨绿\n\t'#4CAF50', // 绿\n\t'#8BC34A', // 浅绿\n\t'#FFC107', // 琥珀\n\t'#FF9800', // 橙\n\t'#FF5722', // 深橙\n\t'#795548', // 棕\n\t'#607D8B', // 蓝灰\n]\n\nexport default function ThemeColorPickerModal({\n\tvisible,\n\tcurrentColor,\n\tonDismiss,\n\tonSelect,\n}: ThemeColorPickerModalProps) {\n\tconst colors = useTheme().colors\n\tconst [hue, setHue] = useState(210)\n\tconst [saturation, setSaturation] = useState(80)\n\tconst [lightness, setLightness] = useState(50)\n\tconst [hexInput, setHexInput] = useState('#2196F3')\n\tconst [inputError, setInputError] = useState<string | null>(null)\n\n\tuseEffect(() => {\n\t\tif (!visible) return\n\t\ttry {\n\t\t\tconst initialHex = currentColor && Color(currentColor) ? currentColor : '#2196F3'\n\t\t\tconst c = Color(initialHex)\n\t\t\tsetHue(Math.round(c.hue()))\n\t\t\tsetSaturation(Math.round(c.saturationl()))\n\t\t\tsetLightness(Math.round(c.lightness()))\n\t\t\tsetHexInput(c.hex().toUpperCase())\n\t\t\tsetInputError(null)\n\t\t} catch {\n\t\t\tsetHue(210)\n\t\t\tsetSaturation(80)\n\t\t\tsetLightness(50)\n\t\t\tsetHexInput('#2196F3')\n\t\t\tsetInputError(null)\n\t\t}\n\t}, [visible, currentColor])\n\n\tconst currentHex = (() => {\n\t\ttry {\n\t\t\treturn Color.hsl(hue, saturation, lightness).hex().toUpperCase()\n\t\t} catch {\n\t\t\treturn '#2196F3'\n\t\t}\n\t})()\n\n\tconst isDarkColor = (() => {\n\t\ttry {\n\t\t\treturn Color(currentHex).isDark()\n\t\t} catch {\n\t\t\treturn false\n\t\t}\n\t})()\n\n\tconst handleSwatchPress = (colorHex: string) => {\n\t\ttry {\n\t\t\tconst c = Color(colorHex)\n\t\t\tsetHue(Math.round(c.hue()))\n\t\t\tsetSaturation(Math.round(c.saturationl()))\n\t\t\tsetLightness(Math.round(c.lightness()))\n\t\t\tsetHexInput(c.hex().toUpperCase())\n\t\t\tsetInputError(null)\n\t\t} catch {\n\t\t\t// ignore\n\t\t}\n\t}\n\n\tconst handleHexInputChange = (text: string) => {\n\t\tlet formatted = text.trim()\n\t\tif (!formatted.startsWith('#')) {\n\t\t\tformatted = '#' + formatted\n\t\t}\n\t\tsetHexInput(formatted)\n\n\t\tif (/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(formatted)) {\n\t\t\ttry {\n\t\t\t\tconst c = Color(formatted)\n\t\t\t\tsetHue(Math.round(c.hue()))\n\t\t\t\tsetSaturation(Math.round(c.saturationl()))\n\t\t\t\tsetLightness(Math.round(c.lightness()))\n\t\t\t\tsetInputError(null)\n\t\t\t} catch {\n\t\t\t\tsetInputError('无效的十六进制颜色')\n\t\t\t}\n\t\t} else {\n\t\t\tsetInputError('请输入合法的 HEX 颜色代码，例如 #2196F3')\n\t\t}\n\t}\n\n\tconst handleConfirm = () => {\n\t\tonSelect(currentHex)\n\t\tonDismiss()\n\t}\n\n\treturn (\n\t\t<Portal>\n\t\t\t<Dialog\n\t\t\t\tvisible={visible}\n\t\t\t\tonDismiss={onDismiss}\n\t\t\t\tstyle={[styles.dialog, { backgroundColor: colors.surface }]}\n\t\t\t>\n\t\t\t\t<Dialog.Title style={styles.title}>自定义主题色</Dialog.Title>\n\t\t\t\t<Dialog.ScrollArea style={styles.scrollArea}>\n\t\t\t\t\t<KeyboardAvoidingView\n\t\t\t\t\t\tbehavior={Platform.OS === 'ios' ? 'padding' : undefined}\n\t\t\t\t\t>\n\t\t\t\t\t\t<ScrollView\n\t\t\t\t\t\t\tcontentContainerStyle={styles.scrollContent}\n\t\t\t\t\t\t\tshowsVerticalScrollIndicator={false}\n\t\t\t\t\t\t\tkeyboardShouldPersistTaps='handled'\n\t\t\t\t\t\t>\n\t\t\t\t\t\t\t{/* 实时预览条 */}\n\t\t\t\t\t\t\t<View\n\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\tstyles.previewCard,\n\t\t\t\t\t\t\t\t\t{ backgroundColor: currentHex },\n\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t<Text\n\t\t\t\t\t\t\t\t\tvariant='titleMedium'\n\t\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\t\tstyles.previewText,\n\t\t\t\t\t\t\t\t\t\t{ color: isDarkColor ? '#FFFFFF' : '#000000' },\n\t\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t\t{currentHex}\n\t\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t</View>\n\n\t\t\t\t\t\t\t{/* HEX 代码输入 */}\n\t\t\t\t\t\t\t<TextInput\n\t\t\t\t\t\t\t\tmode='outlined'\n\t\t\t\t\t\t\t\tdense\n\t\t\t\t\t\t\t\tlabel='HEX 颜色代码'\n\t\t\t\t\t\t\t\tvalue={hexInput}\n\t\t\t\t\t\t\t\tonChangeText={handleHexInputChange}\n\t\t\t\t\t\t\t\tautoCapitalize='characters'\n\t\t\t\t\t\t\t\tplaceholder='#RRGGBB'\n\t\t\t\t\t\t\t\tstyle={styles.textInput}\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t{inputError ? (\n\t\t\t\t\t\t\t\t<HelperText type='error' visible={!!inputError}>\n\t\t\t\t\t\t\t\t\t{inputError}\n\t\t\t\t\t\t\t\t</HelperText>\n\t\t\t\t\t\t\t) : null}\n\n\t\t\t\t\t\t\t{/* 快速色板 */}\n\t\t\t\t\t\t\t<Text variant='labelMedium' style={styles.sliderLabel}>\n\t\t\t\t\t\t\t\t推荐色板\n\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t<View style={styles.swatchGrid}>\n\t\t\t\t\t\t\t\t{PALETTE_SWATCHES.map((swatch) => {\n\t\t\t\t\t\t\t\t\tconst isSelected =\n\t\t\t\t\t\t\t\t\t\tcurrentHex.toLowerCase() === swatch.toLowerCase()\n\t\t\t\t\t\t\t\t\treturn (\n\t\t\t\t\t\t\t\t\t\t<Pressable\n\t\t\t\t\t\t\t\t\t\t\tkey={swatch}\n\t\t\t\t\t\t\t\t\t\t\tonPress={() => handleSwatchPress(swatch)}\n\t\t\t\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\t\t\t\tstyles.swatch,\n\t\t\t\t\t\t\t\t\t\t\t\t{ backgroundColor: swatch },\n\t\t\t\t\t\t\t\t\t\t\t\tisSelected && styles.swatchSelected,\n\t\t\t\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t\t\t\t\taccessibilityRole='button'\n\t\t\t\t\t\t\t\t\t\t\taccessibilityLabel={`选择颜色 ${swatch}`}\n\t\t\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t\t\t)\n\t\t\t\t\t\t\t\t})}\n\t\t\t\t\t\t\t</View>\n\n\t\t\t\t\t\t\t{/* 色相滑块 */}\n\t\t\t\t\t\t\t<View style={styles.sliderSection}>\n\t\t\t\t\t\t\t\t<View style={styles.sliderHeader}>\n\t\t\t\t\t\t\t\t\t<Text variant='labelMedium'>色相 (Hue)</Text>\n\t\t\t\t\t\t\t\t\t<Text variant='bodySmall' style={{ color: colors.onSurfaceVariant }}>\n\t\t\t\t\t\t\t\t\t\t{hue}°\n\t\t\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t\t\t<LinearGradient\n\t\t\t\t\t\t\t\t\tcolors={[\n\t\t\t\t\t\t\t\t\t\t'#FF0000',\n\t\t\t\t\t\t\t\t\t\t'#FFFF00',\n\t\t\t\t\t\t\t\t\t\t'#00FF00',\n\t\t\t\t\t\t\t\t\t\t'#00FFFF',\n\t\t\t\t\t\t\t\t\t\t'#0000FF',\n\t\t\t\t\t\t\t\t\t\t'#FF00FF',\n\t\t\t\t\t\t\t\t\t\t'#FF0000',\n\t\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t\t\tstart={{ x: 0, y: 0.5 }}\n\t\t\t\t\t\t\t\t\tend={{ x: 1, y: 0.5 }}\n\t\t\t\t\t\t\t\t\tstyle={styles.gradientBar}\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t\t<Slider\n\t\t\t\t\t\t\t\t\tminimumValue={0}\n\t\t\t\t\t\t\t\t\tmaximumValue={360}\n\t\t\t\t\t\t\t\t\tstep={1}\n\t\t\t\t\t\t\t\t\tvalue={hue}\n\t\t\t\t\t\t\t\t\tonValueChange={(val) => {\n\t\t\t\t\t\t\t\t\t\tsetHue(Math.round(val))\n\t\t\t\t\t\t\t\t\t\ttry {\n\t\t\t\t\t\t\t\t\t\t\tconst updated = Color.hsl(Math.round(val), saturation, lightness)\n\t\t\t\t\t\t\t\t\t\t\tsetHexInput(updated.hex().toUpperCase())\n\t\t\t\t\t\t\t\t\t\t\tsetInputError(null)\n\t\t\t\t\t\t\t\t\t\t} catch {\n\t\t\t\t\t\t\t\t\t\t\t// ignore\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t}}\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t</View>\n\n\t\t\t\t\t\t\t{/* 亮度滑块 */}\n\t\t\t\t\t\t\t<View style={styles.sliderSection}>\n\t\t\t\t\t\t\t\t<View style={styles.sliderHeader}>\n\t\t\t\t\t\t\t\t\t<Text variant='labelMedium'>亮度 (Lightness)</Text>\n\t\t\t\t\t\t\t\t\t<Text variant='bodySmall' style={{ color: colors.onSurfaceVariant }}>\n\t\t\t\t\t\t\t\t\t\t{lightness}%\n\t\t\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t\t\t<Slider\n\t\t\t\t\t\t\t\t\tminimumValue={20}\n\t\t\t\t\t\t\t\t\tmaximumValue={85}\n\t\t\t\t\t\t\t\t\tstep={1}\n\t\t\t\t\t\t\t\t\tvalue={lightness}\n\t\t\t\t\t\t\t\t\tonValueChange={(val) => {\n\t\t\t\t\t\t\t\t\t\tsetLightness(Math.round(val))\n\t\t\t\t\t\t\t\t\t\ttry {\n\t\t\t\t\t\t\t\t\t\t\tconst updated = Color.hsl(hue, saturation, Math.round(val))\n\t\t\t\t\t\t\t\t\t\t\tsetHexInput(updated.hex().toUpperCase())\n\t\t\t\t\t\t\t\t\t\t\tsetInputError(null)\n\t\t\t\t\t\t\t\t\t\t} catch {\n\t\t\t\t\t\t\t\t\t\t\t// ignore\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t}}\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t</View>\n\n\t\t\t\t\t\t\t{/* 饱和度滑块 */}\n\t\t\t\t\t\t\t<View style={styles.sliderSection}>\n\t\t\t\t\t\t\t\t<View style={styles.sliderHeader}>\n\t\t\t\t\t\t\t\t\t<Text variant='labelMedium'>饱和度 (Saturation)</Text>\n\t\t\t\t\t\t\t\t\t<Text variant='bodySmall' style={{ color: colors.onSurfaceVariant }}>\n\t\t\t\t\t\t\t\t\t\t{saturation}%\n\t\t\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t\t\t<Slider\n\t\t\t\t\t\t\t\t\tminimumValue={20}\n\t\t\t\t\t\t\t\t\tmaximumValue={100}\n\t\t\t\t\t\t\t\t\tstep={1}\n\t\t\t\t\t\t\t\t\tvalue={saturation}\n\t\t\t\t\t\t\t\t\tonValueChange={(val) => {\n\t\t\t\t\t\t\t\t\t\tsetSaturation(Math.round(val))\n\t\t\t\t\t\t\t\t\t\ttry {\n\t\t\t\t\t\t\t\t\t\t\tconst updated = Color.hsl(hue, Math.round(val), lightness)\n\t\t\t\t\t\t\t\t\t\t\tsetHexInput(updated.hex().toUpperCase())\n\t\t\t\t\t\t\t\t\t\t\tsetInputError(null)\n\t\t\t\t\t\t\t\t\t\t} catch {\n\t\t\t\t\t\t\t\t\t\t\t// ignore\n\t\t\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t\t\t}}\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t</ScrollView>\n\t\t\t\t\t</KeyboardAvoidingView>\n\t\t\t\t</Dialog.ScrollArea>\n\t\t\t\t<Dialog.Actions>\n\t\t\t\t\t<Button onPress={onDismiss}>取消</Button>\n\t\t\t\t\t<Button mode='contained' onPress={handleConfirm}>\n\t\t\t\t\t\t确认\n\t\t\t\t\t</Button>\n\t\t\t\t</Dialog.Actions>\n\t\t\t</Dialog>\n\t\t</Portal>\n\t)\n}\n\nconst styles = StyleSheet.create({\n\tdialog: {\n\t\tborderRadius: 16,\n\t\tmaxHeight: '90%',\n\t},\n\ttitle: {\n\t\ttextAlign: 'center',\n\t\tfontSize: 18,\n\t\tfontWeight: 'bold',\n\t},\n\tscrollArea: {\n\t\tpaddingHorizontal: 16,\n\t\tpaddingVertical: 8,\n\t\tmaxHeight: 460,\n\t},\n\tscrollContent: {\n\t\tpaddingBottom: 16,\n\t},\n\tpreviewCard: {\n\t\theight: 48,\n\t\tborderRadius: 12,\n\t\talignItems: 'center',\n\t\tjustifyContent: 'center',\n\t\tmarginBottom: 12,\n\t\televation: 2,\n\t\tshadowColor: '#000',\n\t\tshadowOffset: { width: 0, height: 2 },\n\t\tshadowOpacity: 0.15,\n\t\tshadowRadius: 4,\n\t},\n\tpreviewText: {\n\t\tfontWeight: 'bold',\n\t\tletterSpacing: 1.5,\n\t},\n\ttextInput: {\n\t\tmarginBottom: 4,\n\t},\n\tswatchGrid: {\n\t\tflexDirection: 'row',\n\t\tflexWrap: 'wrap',\n\t\tgap: 8,\n\t\tmarginVertical: 10,\n\t\tjustifyContent: 'space-between',\n\t},\n\tswatch: {\n\t\twidth: 32,\n\t\theight: 32,\n\t\tborderRadius: 16,\n\t\tborderWidth: 1.5,\n\t\tborderColor: 'rgba(255,255,255,0.2)',\n\t},\n\tswatchSelected: {\n\t\tborderColor: '#FFFFFF',\n\t\tborderWidth: 3,\n\t\ttransform: [{ scale: 1.15 }],\n\t},\n\tsliderSection: {\n\t\tmarginTop: 10,\n\t},\n\tsliderHeader: {\n\t\tflexDirection: 'row',\n\t\tjustifyContent: 'space-between',\n\t\talignItems: 'center',\n\t\tmarginBottom: 4,\n\t},\n\tsliderLabel: {\n\t\tmarginTop: 8,\n\t},\n\tgradientBar: {\n\t\theight: 8,\n\t\tborderRadius: 4,\n\t\tmarginBottom: 6,\n\t},\n})\n", "utf8");
             console.log("✅ 已写入 ThemeColorPickerModal.tsx");
           }
-
           const themeSectionPath = "apps/mobile/src/features/theme/ThemeColorSection.tsx";
           if (!fs.existsSync(themeSectionPath)) {
             fs.mkdirSync(path.dirname(themeSectionPath), { recursive: true });
             fs.writeFileSync(themeSectionPath, "import Icon from '@react-native-vector-icons/material-design-icons'\nimport Color from 'color'\nimport { useState } from 'react'\nimport { Pressable, ScrollView, StyleSheet, View } from 'react-native'\nimport { Text, useTheme } from 'react-native-paper'\n\nimport ThemeColorPickerModal from './ThemeColorPickerModal'\n\nimport useAppStore from '@/hooks/stores/useAppStore'\n\nexport interface ThemePreset {\n\tkey: string\n\tlabel: string\n\tcolor?: string\n}\n\nexport const THEME_COLOR_PRESETS: ThemePreset[] = [\n\t{ key: 'default', label: '默认', color: undefined },\n\t{ key: 'red', label: '红', color: '#E53935' },\n\t{ key: 'orange', label: '橙', color: '#FB8C00' },\n\t{ key: 'yellow', label: '黄', color: '#FBC02D' },\n\t{ key: 'green', label: '绿', color: '#43A047' },\n\t{ key: 'blue', label: '蓝', color: '#1E88E5' },\n\t{ key: 'indigo', label: '靛', color: '#3949AB' },\n\t{ key: 'violet', label: '紫', color: '#8E24AA' },\n]\n\nexport default function ThemeColorSection() {\n\tconst colors = useTheme().colors\n\tconst themeColor = useAppStore((state) => state.settings.themeColor)\n\tconst setSettings = useAppStore((state) => state.setSettings)\n\tconst [pickerVisible, setPickerVisible] = useState(false)\n\n\tconst isPresetMatch = (presetColor?: string) => {\n\t\tif (!themeColor && !presetColor) return true\n\t\tif (!themeColor || !presetColor) return false\n\t\treturn themeColor.toLowerCase() === presetColor.toLowerCase()\n\t}\n\n\tconst isCustomActive =\n\t\tBoolean(themeColor) &&\n\t\t!THEME_COLOR_PRESETS.some(\n\t\t\t(p) => p.color && p.color.toLowerCase() === themeColor?.toLowerCase(),\n\t\t)\n\n\tconst handleSelectPreset = (color?: string) => {\n\t\tsetSettings({ themeColor: color })\n\t}\n\n\tconst handleCustomColorSelected = (colorHex: string) => {\n\t\tsetSettings({ themeColor: colorHex })\n\t}\n\n\treturn (\n\t\t<View style={styles.container}>\n\t\t\t<ScrollView\n\t\t\t\thorizontal\n\t\t\t\tshowsHorizontalScrollIndicator={false}\n\t\t\t\tcontentContainerStyle={styles.scrollContainer}\n\t\t\t>\n\t\t\t\t{THEME_COLOR_PRESETS.map((preset) => {\n\t\t\t\t\tconst active = isPresetMatch(preset.color) && !isCustomActive\n\t\t\t\t\tconst displayColor = preset.color ?? colors.primary\n\t\t\t\t\tconst isDark = (() => {\n\t\t\t\t\t\ttry {\n\t\t\t\t\t\t\treturn Color(displayColor).isDark()\n\t\t\t\t\t\t} catch {\n\t\t\t\t\t\t\treturn true\n\t\t\t\t\t\t}\n\t\t\t\t\t})()\n\n\t\t\t\t\treturn (\n\t\t\t\t\t\t<Pressable\n\t\t\t\t\t\t\tkey={preset.key}\n\t\t\t\t\t\t\tstyle={styles.item}\n\t\t\t\t\t\t\tonPress={() => handleSelectPreset(preset.color)}\n\t\t\t\t\t\t\taccessibilityRole='button'\n\t\t\t\t\t\t\taccessibilityLabel={`选择${preset.label}主题色`}\n\t\t\t\t\t\t>\n\t\t\t\t\t\t\t<View\n\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\tstyles.colorCircle,\n\t\t\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\t\t\tbackgroundColor: preset.color ?? colors.primary,\n\t\t\t\t\t\t\t\t\t\tborderColor: active ? colors.onSurface : 'transparent',\n\t\t\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\t\t\tactive && styles.activeCircle,\n\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t{active && (\n\t\t\t\t\t\t\t\t\t<Icon\n\t\t\t\t\t\t\t\t\t\tname='check'\n\t\t\t\t\t\t\t\t\t\tsize={22}\n\t\t\t\t\t\t\t\t\t\tcolor={isDark ? '#FFFFFF' : '#000000'}\n\t\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t\t)}\n\t\t\t\t\t\t\t</View>\n\t\t\t\t\t\t\t<Text\n\t\t\t\t\t\t\t\tvariant='bodySmall'\n\t\t\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\t\t\tstyles.label,\n\t\t\t\t\t\t\t\t\tactive\n\t\t\t\t\t\t\t\t\t\t? [styles.activeLabel, { color: colors.primary }]\n\t\t\t\t\t\t\t\t\t\t: { color: colors.onSurfaceVariant },\n\t\t\t\t\t\t\t\t]}\n\t\t\t\t\t\t\t>\n\t\t\t\t\t\t\t\t{preset.label}\n\t\t\t\t\t\t\t</Text>\n\t\t\t\t\t\t</Pressable>\n\t\t\t\t\t)\n\t\t\t\t})}\n\n\t\t\t\t{/* 自定义颜色选项 */}\n\t\t\t\t<Pressable\n\t\t\t\t\tstyle={styles.item}\n\t\t\t\t\tonPress={() => setPickerVisible(true)}\n\t\t\t\t\taccessibilityRole='button'\n\t\t\t\t\taccessibilityLabel='自定义主题色'\n\t\t\t\t>\n\t\t\t\t\t<View\n\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\tstyles.colorCircle,\n\t\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\tbackgroundColor: isCustomActive\n\t\t\t\t\t\t\t\t\t? themeColor\n\t\t\t\t\t\t\t\t\t: colors.surfaceVariant,\n\t\t\t\t\t\t\t\tborderColor: isCustomActive ? colors.onSurface : 'transparent',\n\t\t\t\t\t\t\t},\n\t\t\t\t\t\t\tisCustomActive && styles.activeCircle,\n\t\t\t\t\t\t]}\n\t\t\t\t\t>\n\t\t\t\t\t\t{isCustomActive ? (\n\t\t\t\t\t\t\t<Icon\n\t\t\t\t\t\t\t\tname='check'\n\t\t\t\t\t\t\t\tsize={22}\n\t\t\t\t\t\t\t\tcolor={\n\t\t\t\t\t\t\t\t\tthemeColor && Color(themeColor).isDark()\n\t\t\t\t\t\t\t\t\t\t? '#FFFFFF'\n\t\t\t\t\t\t\t\t\t\t: '#000000'\n\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t) : (\n\t\t\t\t\t\t\t<Icon\n\t\t\t\t\t\t\t\tname='palette-outline'\n\t\t\t\t\t\t\t\tsize={22}\n\t\t\t\t\t\t\t\tcolor={colors.onSurfaceVariant}\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t)}\n\t\t\t\t\t</View>\n\t\t\t\t\t<Text\n\t\t\t\t\t\tvariant='bodySmall'\n\t\t\t\t\t\tstyle={[\n\t\t\t\t\t\t\tstyles.label,\n\t\t\t\t\t\t\tisCustomActive\n\t\t\t\t\t\t\t\t? [styles.activeLabel, { color: colors.primary }]\n\t\t\t\t\t\t\t\t: { color: colors.onSurfaceVariant },\n\t\t\t\t\t\t]}\n\t\t\t\t\t>\n\t\t\t\t\t\t自定义\n\t\t\t\t\t</Text>\n\t\t\t\t</Pressable>\n\t\t\t</ScrollView>\n\n\t\t\t<ThemeColorPickerModal\n\t\t\t\tvisible={pickerVisible}\n\t\t\t\tcurrentColor={isCustomActive ? themeColor : undefined}\n\t\t\t\tonDismiss={() => setPickerVisible(false)}\n\t\t\t\tonSelect={handleCustomColorSelected}\n\t\t\t/>\n\t\t</View>\n\t)\n}\n\nconst styles = StyleSheet.create({\n\tcontainer: {\n\t\tmarginTop: 8,\n\t\tmarginBottom: 8,\n\t},\n\tscrollContainer: {\n\t\tflexDirection: 'row',\n\t\talignItems: 'center',\n\t\tpaddingVertical: 8,\n\t\tpaddingRight: 16,\n\t\tgap: 16,\n\t},\n\titem: {\n\t\talignItems: 'center',\n\t\tjustifyContent: 'center',\n\t},\n\tcolorCircle: {\n\t\twidth: 44,\n\t\theight: 44,\n\t\tborderRadius: 22,\n\t\talignItems: 'center',\n\t\tjustifyContent: 'center',\n\t\tborderWidth: 2,\n\t},\n\tactiveCircle: {\n\t\tborderWidth: 2.5,\n\t\ttransform: [{ scale: 1.08 }],\n\t\televation: 3,\n\t\tshadowColor: '#000',\n\t\tshadowOffset: { width: 0, height: 2 },\n\t\tshadowOpacity: 0.25,\n\t\tshadowRadius: 3.84,\n\t},\n\tlabel: {\n\t\tmarginTop: 6,\n\t\ttextAlign: 'center',\n\t\tfontWeight: '500',\n\t},\n\tactiveLabel: {\n\t\tfontWeight: 'bold',\n\t},\n})\n", "utf8");
             console.log("✅ 已写入 ThemeColorSection.tsx");
           }
-
           const appearancePagePath = "apps/mobile/src/app/settings/appearance/index.tsx";
           if (fs.existsSync(appearancePagePath)) {
             let appCode = fs.readFileSync(appearancePagePath, "utf8");
@@ -4720,79 +4606,7 @@ jobs:
               console.log("✅ 已在 appearance/index.tsx 中渲染主题色设置项");
             }
           }
-
-          // 39. 启动期致命 JS 错误诊断：拦截 ExceptionsManager.handleException 的 fatal 错误，
-          // 以非致命方式上报并弹窗展示错误详情（可复制），避免 expo-updates ErrorRecovery 直接 abort 闪退，
-          // 否则 .ips 崩溃日志中只有 ErrorRecovery.crash()，看不到真实的 JS 报错信息。
-          const fatalCatcherPath = "apps/mobile/src/lib/diagnostics/fatalErrorCatcher.ts";
-          fs.mkdirSync(path.dirname(fatalCatcherPath), { recursive: true });
-          fs.writeFileSync(fatalCatcherPath, [
-            "import * as Clipboard from 'expo-clipboard'",
-            "import { Alert } from 'react-native'",
-            "// @ts-ignore RN 内部模块无类型声明（Metro 可正常解析，expo 自身亦有同类深层导入）",
-            "import ExceptionsManager from 'react-native/Libraries/Core/ExceptionsManager'",
-            "import { hide as hideBootSplash } from 'react-native-bootsplash'",
-            "",
-            "let shown = false",
-            "",
-            "function formatError(e: unknown): string {",
-            "  if (e instanceof Error) {",
-            "    const extra = e as Error & { componentStack?: string }",
-            "    return [",
-            "      e.name + ': ' + e.message,",
-            "      (e.stack ?? '').split('\\n').slice(0, 15).join('\\n'),",
-            "      extra.componentStack ? 'Component stack:' + extra.componentStack.split('\\n').slice(0, 15).join('\\n') : '',",
-            "    ].filter(Boolean).join('\\n\\n')",
-            "  }",
-            "  return String(e)",
-            "}",
-            "",
-            "function showFatal(e: unknown) {",
-            "  if (shown) return",
-            "  shown = true",
-            "  const detail = formatError(e)",
-            "  try {",
-            "    void hideBootSplash().catch(() => {})",
-            "  } catch {}",
-            "  Alert.alert('BBPlayer 启动出错（诊断信息）', detail.slice(0, 3000), [",
-            "    { text: '复制错误信息', onPress: () => void Clipboard.setStringAsync(detail) },",
-            "    { text: '关闭', style: 'cancel' },",
-            "  ])",
-            "}",
-            "",
-            "const manager = ExceptionsManager as unknown as {",
-            "  handleException: (e: unknown, isFatal: boolean) => void",
-            "}",
-            "const originalHandleException = manager.handleException",
-            "manager.handleException = (e: unknown, isFatal: boolean) => {",
-            "  if (isFatal) {",
-            "    try {",
-            "      showFatal(e)",
-            "    } catch {}",
-            "  }",
-            "  // 以非致命方式继续上报（控制台 / Sentry），不触发 RCTFatal 与 expo-updates ErrorRecovery.crash()",
-            "  originalHandleException(e, false)",
-            "}",
-            "",
-          ].join("\n"), "utf8");
-          console.log("✅ 已写入 fatalErrorCatcher.ts 启动期致命错误诊断");
-
-          const entryIndexPath = "apps/mobile/index.js";
-          if (fs.existsSync(entryIndexPath)) {
-            let entryCode = fs.readFileSync(entryIndexPath, "utf8");
-            if (!entryCode.includes("fatalErrorCatcher")) {
-              // 必须是入口的第一个 import，确保在其它模块求值前完成拦截
-              entryCode = "import './src/lib/diagnostics/fatalErrorCatcher'\n" + entryCode;
-              fs.writeFileSync(entryIndexPath, entryCode, "utf8");
-              console.log("✅ 已在 index.js 首行注入 fatalErrorCatcher");
-            }
-          } else {
-            console.error("❌ 未找到 apps/mobile/index.js，无法注入启动期错误诊断");
-            process.exit(1);
-          }
-
           EOF
-
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
         run: |
           set -o pipefail
@@ -4800,7 +4614,6 @@ jobs:
           echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
           echo "Calculated VERSION_CODE=$VERSION_CODE"
           cd apps/mobile
-
           # 关键修复 2：将 react-native-screens 加入 RNRepo iOS 预编译黑名单 (denyList.ios)
           # 原因：RNRepo 预编译的 RNScreens.xcframework 仅包含文本格式的 .swiftinterface（无二进制 .swiftmodule），
           # 而 ExpoRouter (Swift) 在 import RNScreens 时会触发 swiftc 的 ModuleInterfaceLoader 启动隔离子编译器，
@@ -4817,16 +4630,13 @@ jobs:
             fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + "\n", "utf8");
             console.log("✅ 已配置 apps/mobile/rnrepo.config.json:", JSON.stringify(cfg));
           '
-
           # 必须带 --no-install，确保在注入 $RNFirebaseDisableSPM 之后再统一执行 pod install
           npx expo prebuild --platform ios --clean --no-install 2>&1 | tee -a "$RUNNER_TEMP/build-ios.log"
-
           # 关键修复：确保 Info.plist 中 100% 写入 UIAppFonts 与 ExpoShareIntoAppGroupId
           node << 'EOF'
           const fs = require("fs");
           const path = require("path");
           const { execSync } = require("child_process");
-
           function findPlist(dir) {
             if (!fs.existsSync(dir)) return null;
             for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -4841,7 +4651,6 @@ jobs:
             }
             return null;
           }
-
           const plistPath = findPlist("ios") || findPlist("apps/mobile/ios");
           if (plistPath) {
             console.log("🔍 检查生成的 Info.plist:", plistPath);
@@ -4873,7 +4682,6 @@ jobs:
               console.log("✅ Info.plist: 已补齐 UIApplicationSceneManifest 配置 (解决 iOS 27 启动断言闪退)");
             }
           }
-
           function findAppDelegate(dir) {
             if (!fs.existsSync(dir)) return null;
             for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -4911,20 +4719,16 @@ jobs:
             }
           }
           EOF
-
       - name: 🍎 安装 CocoaPods 依赖
         run: |
           set -o pipefail
           export NODE_BINARY=$(command -v node)
           cd apps/mobile/ios
-
           # 关键修复 3：在 Podfile 顶部安全注入 $RNFirebaseDisableSPM = true（避免用单行 sed 破坏多行语法）
           grep -q 'RNFirebaseDisableSPM' Podfile || {
             printf '%s\n%s\n' '$RNFirebaseDisableSPM = true' "$(cat Podfile)" > Podfile
           }
-
           pod install --repo-update 2>&1 | tee -a "$RUNNER_TEMP/build-ios.log"
-
           # 防御性检查：若未来 RNRepo 预编译产物的 Swift 主次版本高于当前 Runner 的 Swift 编译器，自动回退为源码编译
           if ! ruby -e '
             local = `xcrun swiftc -version`[/Apple Swift version (\d+\.\d+)/, 1]
@@ -4940,7 +4744,6 @@ jobs:
             echo "⚠️ 检测到 RNRepo 预编译包 Swift 版本高于当前 Xcode，自动切换为 DISABLE_RNREPO=1 源码安装..."
             DISABLE_RNREPO=1 pod install 2>&1 | tee -a "$RUNNER_TEMP/build-ios.log"
           fi
-
           # 关键修复 4：修复 React-Core-prebuilt + useFrameworks: 'static' 在 Release 构建下的头文件与模块映射问题：
           # 1) 提前将 React-Core-prebuilt 切换至 Release 切片，防止 xcodebuild 阶段 replace-rncore-version.js 重新解压覆盖补丁。
           # 2) 将 React.xcframework 内部按子模块嵌套的头文件（如 Headers/React_Core/React/*.h、Headers/Yoga/yoga/*.h 等）
@@ -4952,12 +4755,10 @@ jobs:
           const fs = require("fs");
           const path = require("path");
           const { execFileSync } = require("child_process");
-
           const iosDir = process.cwd();
           const podsRoot = path.join(iosDir, "Pods");
           const prebuiltDir = path.join(podsRoot, "React-Core-prebuilt");
           const xcfwDir = path.join(prebuiltDir, "React.xcframework");
-
           function copyDirRecursive(srcDir, destDir) {
             let copied = 0;
             if (!fs.existsSync(srcDir)) return copied;
@@ -4974,7 +4775,6 @@ jobs:
             }
             return copied;
           }
-
           function materializeReactHeaders(headersRoot, isFrameworkSlice) {
             if (!fs.existsSync(headersRoot)) return 0;
             let count = 0;
@@ -4994,14 +4794,12 @@ jobs:
             }
             return count;
           }
-
           if (fs.existsSync(prebuiltDir)) {
             // 1. 提前将 React-Core-prebuilt 切换至 Release 切片并写入 .last_build_configuration = "Release"
             const rnPkgPath = require.resolve("react-native/package.json", { paths: [iosDir] });
             const rnDir = path.dirname(rnPkgPath);
             const rnVersion = JSON.parse(fs.readFileSync(rnPkgPath, "utf8")).version;
             const replaceScript = path.join(rnDir, "scripts", "replace-rncore-version.js");
-
             if (fs.existsSync(replaceScript)) {
               console.log(`🔄 预切换 React-Core-prebuilt (${rnVersion}) 至 Release 配置...`);
               execFileSync(
@@ -5010,7 +4808,6 @@ jobs:
                 { cwd: podsRoot, stdio: "inherit" }
               );
             }
-
             // 2. 基于 Release 版 React.xcframework 重新生成 React-VFS.yaml
             const vfsTemplatePath = path.join(xcfwDir, "React-VFS-template.yaml");
             const vfsPath = path.join(prebuiltDir, "React-VFS.yaml");
@@ -5021,7 +4818,6 @@ jobs:
               fs.writeFileSync(vfsPath, vfsContent, "utf8");
               console.log(`✅ 已同步更新 Release 版 VFS 映射: ${vfsPath}`);
             }
-
             // 3. 实体化平铺 React.xcframework 头文件到磁盘，消除对虚拟文件系统 (VFS) 的强依赖
             let materializedCount = materializeReactHeaders(path.join(xcfwDir, "Headers"), false);
             if (fs.existsSync(xcfwDir)) {
@@ -5035,7 +4831,6 @@ jobs:
               }
             }
             console.log(`✅ 已实体化平铺 ${materializedCount} 个 React.xcframework 头文件到物理磁盘`);
-
             // 4. 重新对 Release 版 React.xcframework 应用 Expo 的 modulemap 补丁：
             //    移除 `framework module React { ... }`（保留 `React_RCTAppDelegate`）
             const fwModuleReactRegex = /framework module React \{[\s\S]*?\n\}\s*/g;
@@ -5058,18 +4853,15 @@ jobs:
                 }
               }
             }
-
             // 5. 遍历 Target Support Files 下所有 .xcconfig，补齐 React-VFS.yaml、modulemap 以及原生 Swift -I 搜索路径
             const targetSupportDir = path.join(podsRoot, "Target Support Files");
             const useFwModulemap = path.join(targetSupportDir, "React-Core-prebuilt", "React-use-frameworks.modulemap");
             const hasUseFwModulemap = fs.existsSync(useFwModulemap);
-
             if (fs.existsSync(vfsPath) && fs.existsSync(targetSupportDir)) {
               const cVfsFlag = `-ivfsoverlay "${vfsPath}"`;
               const swiftVfsFlag = `-I "\${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers" -Xcc -ivfsoverlay -Xcc "${vfsPath}" -Xcc -Wno-incomplete-umbrella`;
               const cUseFwFlags = `-isystem "\${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers" -fmodule-map-file="\${PODS_ROOT}/Target\\ Support\\ Files/React-Core-prebuilt/React-use-frameworks.modulemap"`;
               const swiftUseFwFlags = `-Xcc -isystem -Xcc "\${PODS_ROOT}/React-Core-prebuilt/React.xcframework/Headers" -Xcc -fmodule-map-file="\${PODS_ROOT}/Target\\ Support\\ Files/React-Core-prebuilt/React-use-frameworks.modulemap"`;
-
               function walkXcconfigs(dir, out = []) {
                 for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
                   const full = path.join(dir, entry.name);
@@ -5078,12 +4870,10 @@ jobs:
                 }
                 return out;
               }
-
               let patchedCount = 0;
               for (const xcconfigPath of walkXcconfigs(targetSupportDir)) {
                 let content = fs.readFileSync(xcconfigPath, "utf8");
                 let changed = false;
-
                 for (const key of ["OTHER_CFLAGS", "OTHER_CPLUSPLUSFLAGS"]) {
                   const re = new RegExp(`^(${key}\\s*=\\s*)(.*)$`, "m");
                   const m = content.match(re);
@@ -5101,7 +4891,6 @@ jobs:
                     changed = true;
                   }
                 }
-
                 const swiftRe = /^(OTHER_SWIFT_FLAGS\s*=\s*)(.*)$/m;
                 const sm = content.match(swiftRe);
                 if (sm) {
@@ -5120,7 +4909,6 @@ jobs:
                   content = content.trimEnd() + `\nOTHER_SWIFT_FLAGS = $(inherited) ${extra}\n`;
                   changed = true;
                 }
-
                 if (changed) {
                   fs.writeFileSync(xcconfigPath, content, "utf8");
                   patchedCount++;
@@ -5130,7 +4918,6 @@ jobs:
             }
           }
           EOF
-
       - name: 🔨 编译 iOS App (禁用代码签名)
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true" # 禁用 Sentry 符号表自动上传，防止缺少 Token 报错
@@ -5158,7 +4945,6 @@ jobs:
               grep -E "(❌|error:|fatal error:|BUILD FAILED)" "$RUNNER_TEMP/build-ios.log" | tail -n 120 || true
               exit 1
             }
-
       - name: 📄 上传构建错误日志 (仅失败时触发)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -5176,14 +4962,11 @@ jobs:
             exit 1
           fi
           echo "✅ 找到 App 路径: $APP_PATH"
-
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           zip -r -y -q BBPlayer-unsigned.ipa Payload
-
           mkdir -p "${GITHUB_WORKSPACE}/dist"
           mv BBPlayer-unsigned.ipa "${GITHUB_WORKSPACE}/dist/"
-
       - name: 🚀 上传 IPA 产物到 GitHub Actions
         uses: actions/upload-artifact@v4
         with:
