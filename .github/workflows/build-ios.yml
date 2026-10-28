@@ -2648,8 +2648,33 @@ jobs:
                 "<GestureHandlerRootView style={[styles.container, { backgroundColor: paperTheme.colors.background }]}>"
               );
             }
+            if (!providersCode.includes("const themeColor = useAppStore((state) => state.settings.themeColor)")) {
+              providersCode = providersCode.replace(
+                "import { queryClient } from '@/lib/config/queryClient'",
+                "import { queryClient } from '@/lib/config/queryClient'\nimport useAppStore from '@/hooks/stores/useAppStore'"
+              );
+              providersCode = providersCode.replace(
+                "const colorScheme = useColorScheme()",
+                "const colorScheme = useColorScheme()\n\tconst themeColor = useAppStore((state) => state.settings.themeColor)"
+              );
+            }
+            providersCode = providersCode.replaceAll(
+              "buildMaterial3PaperColors(colorScheme)",
+              "buildMaterial3PaperColors(colorScheme, themeColor)"
+            );
+            providersCode = providersCode.replace(
+              "[colorScheme],",
+              "[colorScheme, themeColor],"
+            );
+            if (
+              !providersCode.includes("const themeColor = useAppStore((state) => state.settings.themeColor)") ||
+              !providersCode.includes("buildMaterial3PaperColors(colorScheme, themeColor)") ||
+              !providersCode.includes("[colorScheme, themeColor]")
+            ) {
+              throw new Error("AppProviders 主题色联动补丁未能匹配上游源码");
+            }
             fs.writeFileSync(providersPath, providersCode, "utf8");
-            console.log("✅ 已在 providers.tsx 中注入 NavigationThemeProvider 与根容器主题背景色");
+            console.log("✅ 已在 providers.tsx 中注入 NavigationThemeProvider、根容器背景色与持久化主题色联动");
           }
                     // 23. 修复音乐播放界面进度条拖拽与滑动切换歌词手势冲突 (彻底避免任何违规改写 panGestureRecognizer.delegate 导致 iOS 27 闪退)：
           // 原理：通过 Legend-State 响应式状态 playerSliderDragging$ 联动 PagerView 的 scrollEnabled 属性。
@@ -4486,53 +4511,58 @@ jobs:
             }
           }
           // 37. 音乐库装扮背景与栏目位置贴合：将各个栏目和指示分割线整体向上移动匹配装扮背景
-          const skinBgPath = "apps/mobile/src/components/navigation/SkinAppbarBackground.tsx";
-          if (fs.existsSync(skinBgPath)) {
-            let sbg = fs.readFileSync(skinBgPath, "utf8");
-            if (!sbg.includes("fadeHeight")) {
-              sbg = sbg.replace(
-                "interface SkinAppbarBackgroundProps {\n\theight: number\n}",
-                "interface SkinAppbarBackgroundProps {\n\theight: number\n\tfadeHeight?: number\n}"
-              );
-              sbg = sbg.replace(
-                "const SkinAppbarBackground = memo(function SkinAppbarBackground({\n\theight,\n}: SkinAppbarBackgroundProps) {",
-                "const SkinAppbarBackground = memo(function SkinAppbarBackground({\n\theight,\n\tfadeHeight = 56,\n}: SkinAppbarBackgroundProps) {"
-              );
-              sbg = sbg.replace(
-                "style={styles.fade}\n\t\t\t/>",
-                "style={[styles.fade, { height: fadeHeight }]}\n\t\t\t/>"
-              );
-              fs.writeFileSync(skinBgPath, sbg, "utf8");
-              console.log("✅ 已在 SkinAppbarBackground 中支持自定义 fadeHeight");
-            }
-          }
           const libraryTabPath = "apps/mobile/src/app/(tabs)/library/[tab].tsx";
           if (fs.existsSync(libraryTabPath)) {
             let libCode = fs.readFileSync(libraryTabPath, "utf8");
-            if (!libCode.includes("height={insets.top + 80}")) {
-              libCode = libCode.replace(
-                "<SkinAppbarBackground height={insets.top + 100} />",
-                "<SkinAppbarBackground height={insets.top + 80} fadeHeight={32} />"
-              );
-              libCode = libCode.replace(
-                "paddingTop: insets.top + 8,",
-                "paddingTop: insets.top + 2,"
-              );
-              libCode = libCode.replace(
-                "marginBottom: 8,\n\t\t\t\t\t\t\t\tmarginTop: 8,",
-                "marginBottom: 0,\n\t\t\t\t\t\t\t\tmarginTop: 0,\n\t\t\t\t\t\t\t\televation: 0,\n\t\t\t\t\t\t\t\tshadowOpacity: 0,"
-              );
-              libCode = libCode.replace(
-                "indicatorStyle={{ backgroundColor: colors.onSecondaryContainer }}",
-                "tabStyle={{ minHeight: 40, paddingVertical: 0 }}\n\t\t\t\t\t\t\tindicatorStyle={{ backgroundColor: colors.primary, height: 2 }}"
-              );
-              libCode = libCode.replace(
-                "activeColor={colors.onSecondaryContainer}",
-                "activeColor={colors.primary}"
-              );
-              fs.writeFileSync(libraryTabPath, libCode, "utf8");
-              console.log("✅ 已在 library/[tab].tsx 中调整栏目与分割线位置紧贴装扮背景");
+            libCode = libCode.replace(
+              "paddingTop: insets.top + 8,",
+              "paddingTop: insets.top + 2,"
+            );
+            libCode = libCode.replace(
+              "marginBottom: 8,\n\t\t\t\t\t\t\t\tmarginTop: 8,",
+              "marginBottom: 0,\n\t\t\t\t\t\t\t\tmarginTop: 0,\n\t\t\t\t\t\t\t\televation: 0,\n\t\t\t\t\t\t\t\tshadowOpacity: 0,"
+            );
+            libCode = libCode.replace(
+              "indicatorStyle={{ backgroundColor: colors.onSecondaryContainer }}",
+              "tabStyle={{ minHeight: 56, paddingVertical: 0 }}\n\t\t\t\t\t\t\tindicatorStyle={{ backgroundColor: colors.primary, height: 2 }}"
+            );
+            libCode = libCode.replace(
+              "activeColor={colors.onSecondaryContainer}",
+              "activeColor={colors.primary}"
+            );
+            if (
+              !libCode.includes("<SkinAppbarBackground height={insets.top + 100} />") ||
+              !libCode.includes("paddingTop: insets.top + 2,") ||
+              !libCode.includes("tabStyle={{ minHeight: 56, paddingVertical: 0 }}") ||
+              !libCode.includes("activeColor={colors.primary}")
+            ) {
+              throw new Error("音乐库栏目对齐补丁未能匹配上游源码");
             }
+            fs.writeFileSync(libraryTabPath, libCode, "utf8");
+            console.log("✅ 已在 library/[tab].tsx 中调整栏目与分割线位置紧贴装扮背景");
+          }
+          const searchPagePath = "apps/mobile/src/app/(tabs)/index.tsx";
+          if (fs.existsSync(searchPagePath)) {
+            let searchCode = fs.readFileSync(searchPagePath, "utf8");
+            searchCode = searchCode.replace(
+              "style={[styles.header, { paddingTop: insets.top + 8 }]}",
+              "style={[styles.header, { paddingTop: insets.top + 2 }]}"
+            );
+            searchCode = searchCode.replace(
+              "header: { paddingHorizontal: 16, paddingBottom: 16, minHeight: 56 },",
+              "header: { paddingHorizontal: 16, paddingBottom: 0 },"
+            );
+            if (
+              searchCode.includes("style={[styles.header, { paddingTop: insets.top + 8 }]}") ||
+              searchCode.includes("minHeight: 56") ||
+              !searchCode.includes("style={[styles.header, { paddingTop: insets.top + 2 }]}") ||
+              !searchCode.includes("header: { paddingHorizontal: 16, paddingBottom: 0 },") ||
+              !searchCode.includes("<SkinAppbarBackground height={insets.top + 100} />")
+            ) {
+              throw new Error("搜索页顶部间距补丁未能匹配上游源码");
+            }
+            fs.writeFileSync(searchPagePath, searchCode, "utf8");
+            console.log("✅ 已将搜索页标题与搜索框上移，使其与音乐库标题及子栏目顶部对齐");
           }
           // 38. 在「设置-外观与主题」中添加全局自定义主题色（预设红橙黄绿蓝靛紫与调色盘弹窗），保留深色/浅色背景
           const matColorsPath = "apps/mobile/src/lib/theme/material3Colors.ts";
