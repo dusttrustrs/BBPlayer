@@ -2078,7 +2078,7 @@ jobs:
             if (!useAppStoreCode.includes("openPlayerOnTrackPress:")) {
               useAppStoreCode = useAppStoreCode.replace(
                 "hideStarPrompt: false,",
-                "hideStarPrompt: false,\n\t\t\t\t\topenPlayerOnTrackPress: true,\n\t\t\t\t\tenableSystemMediaControl: true,\n\t\t\t\t\tdownloadAudioOnly: true,\n\t\t\t\t\tthemeColor: undefined,\n\t\t\t\t\tdownloadAudioOnly: true,\n\t\t\t\t\tdownloadAudioOnly: true,"
+                "hideStarPrompt: false,\n\t\t\t\t\topenPlayerOnTrackPress: true,\n\t\t\t\t\tenableSystemMediaControl: true,\n\t\t\t\t\tdownloadAudioOnly: true,\n\t\t\t\t\tthemeColor: undefined,"
               );
             }
             if (!useAppStoreCode.includes("updates.enableSystemMediaControl !== undefined")) {
@@ -2590,8 +2590,13 @@ jobs:
             if (!layoutCode.includes("contentStyle: { backgroundColor: appBg }")) {
               layoutCode = layoutCode.replace(
                 "function RootLayout() {",
-                "function RootLayout() {\n  const colorScheme = useColorScheme()\n  const themeColor = useAppStore((state) => state.settings.themeColor)\n  const isDark = colorScheme === 'dark'\n  const appBg = isDark ? '#141218' : '#FEF7FF'"
+                "function RootLayout() {\n  const colorScheme = useColorScheme()\n  const themeColor = useAppStoreObj((state) => state.settings.themeColor)\n  const isDark = colorScheme === 'dark'\n  const appBg = isDark ? '#141218' : '#FEF7FF'"
               );
+              // 注意：_layout.tsx 仅以 useAppStoreObj 名称默认导入 store，引用未声明的 useAppStore 会在启动时抛出 ReferenceError 导致闪退
+              if (!layoutCode.includes("import useAppStoreObj from '@/hooks/stores/useAppStore'")) {
+                console.error("❌ _layout.tsx: 未找到 useAppStoreObj 导入，themeColor 订阅将引用未定义变量");
+                process.exit(1);
+              }
               layoutCode = layoutCode.replace(
                 "<View style={styles.appContainer}>",
                 "<View style={[styles.appContainer, { backgroundColor: appBg }]}>"
@@ -4498,13 +4503,18 @@ jobs:
                 "import { Platform, StyleSheet, View } from 'react-native'",
                 "import { Platform, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native'"
               );
+              // 上游为 `const [isUpdating, setIsUpdating] = useState(false)`，需兼容两种写法，否则 maxScrollHeight 未声明会在弹窗渲染时抛出 ReferenceError
               umCode = umCode.replace(
-                "const [isUpdating] = useState(false)",
-                "const { height: windowHeight } = useWindowDimensions()\n  const maxScrollHeight = Math.min(380, Math.max(220, windowHeight * 0.45))\n  const [isUpdating, setIsUpdating] = useState(false)"
+                /const \[isUpdating(, setIsUpdating)?\] = useState\(false\)/,
+                () => "const { height: windowHeight } = useWindowDimensions()\n  const maxScrollHeight = Math.min(380, Math.max(220, windowHeight * 0.45))\n  const [isUpdating, setIsUpdating] = useState(false)"
               );
+              if (!umCode.includes("const maxScrollHeight =")) {
+                console.error("❌ UpdateAppModal.tsx: maxScrollHeight 声明补丁未匹配（源码已变化）");
+                process.exit(1);
+              }
               umCode = umCode.replace(
-                "storage.set('skip_version', version)\n    close()",
-                "storage.set('skip_version', version)\n    toast.info(`已跳过版本 ${version}，新版本发布前将不再提示`)\n    close()"
+                /storage\.set\('skip_version', version\)(\s*)close\(\)/,
+                (_, ws) => "storage.set('skip_version', version)" + ws + "toast.info(`已跳过版本 ${version}，新版本发布前将不再提示`)" + ws + "close()"
               );
               const oldDialogContent = /<Dialog\.Content>[\s\S]*?<\/Dialog\.Content>/;
               const newDialogContent = [
@@ -4608,9 +4618,10 @@ jobs:
                 "import { Color } from 'expo-router'",
                 "import ColorJS from 'color'\nimport { Color } from 'expo-router'"
               );
+              // 注意：原函数体已声明 const d / const fallback，必须连同签名一起替换，否则会出现 "Identifier 'd' has already been declared"
               mc = mc.replace(
-                "export function buildMaterial3PaperColors(\n\tcolorScheme: ColorSchemeName,\n): MD3Colors {",
-                [
+                /export function buildMaterial3PaperColors\(\s*colorScheme: ColorSchemeName,?\s*\): MD3Colors \{\s*const d = Color\.android\.dynamic\s*const fallback =\s*colorScheme === 'dark' \? MD3DarkTheme\.colors : MD3LightTheme\.colors\s*/,
+                () => [
                   "export function buildMaterial3PaperColors(",
                   "  colorScheme: ColorSchemeName,",
                   "  customPrimaryColor?: string,",
@@ -4653,9 +4664,15 @@ jobs:
                   "        inversePrimary = c.lighten(0.3).hex()",
                   "      }",
                   "    } catch {}",
-                  "  }"
+                  "  }",
+                  "",
+                  "  "
                 ].join("\n")
               );
+              if (!mc.includes("customPrimaryColor?: string")) {
+                console.error("❌ material3Colors.ts 签名替换失败，上游源码可能已变更");
+                process.exit(1);
+              }
               mc = mc.replace(
                 "return {\n\t\tprimary: (d.primary as string) ?? fallback.primary,\n\t\tprimaryContainer:\n\t\t\t(d.primaryContainer as string) ?? fallback.primaryContainer,\n\t\tsecondary: (d.secondary as string) ?? fallback.secondary,\n\t\tsecondaryContainer:\n\t\t\t(d.secondaryContainer as string) ?? fallback.secondaryContainer,\n\t\ttertiary: (d.tertiary as string) ?? fallback.tertiary,",
                 "return {\n    primary,\n    primaryContainer,\n    secondary,\n    secondaryContainer,\n    tertiary: (d.tertiary as string) ?? fallback.tertiary,"
