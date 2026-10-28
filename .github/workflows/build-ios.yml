@@ -1563,7 +1563,8 @@ jobs:
             if (!semverComparePattern.test(updateSvcCode)) {
               throw new Error("未找到 updateService.ts 的 compareSemver 声明，无法修复版本判断逻辑");
             }
-            updateSvcCode = updateSvcCode.replace(semverComparePattern, numericCompareSemver.join("\n"));
+            // numericCompareSemver 在声明处已经拼接为字符串，不能再次调用 join。
+            updateSvcCode = updateSvcCode.replace(semverComparePattern, numericCompareSemver);
             const newFetchRelease = [
               "export async function fetchLatestRelease(): Promise<Result<ReleaseInfo, Error>> {",
               "    try {",
@@ -4672,6 +4673,134 @@ jobs:
               console.log("✅ 已在 appearance/index.tsx 中渲染主题色设置项");
             }
           }
+          EOF
+      - name: 🎵 注册并同步 iOS Now Playing Live Activity
+        run: |
+          node << 'EOF'
+          const fs = require("fs");
+          const path = require("path");
+          const activityPath = "apps/mobile/src/features/live-activity/NowPlayingActivity.tsx";
+          const bridgePath = "apps/mobile/src/features/live-activity/NowPlayingActivityBridge.tsx";
+          const appConfigPath = "apps/mobile/app.config.ts";
+          if (fs.existsSync(appConfigPath)) {
+            let appConfig = fs.readFileSync(appConfigPath, "utf8");
+            if (!appConfig.includes("expo-widgets")) {
+              if (!/plugins\s*:\s*\[/.test(appConfig)) {
+                throw new Error("app.config.ts 中未找到 plugins 数组，无法注册 expo-widgets 扩展");
+              }
+              appConfig = appConfig.replace(
+                /plugins\s*:\s*\[/,
+                "plugins: [['expo-widgets', { groupIdentifier: 'group.com.roitium.bbplayer', frequentUpdates: true }],"
+              );
+              fs.writeFileSync(appConfigPath, appConfig, "utf8");
+              console.log("✅ 已向 app.config.ts 注册 expo-widgets Live Activity 扩展");
+            }
+          }
+          fs.mkdirSync(path.dirname(activityPath), { recursive: true });
+          fs.writeFileSync(activityPath, `import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui'
+          import { activityBackgroundTint, font, foregroundStyle, padding, widgetURL } from '@expo/ui/swift-ui/modifiers'
+          import { createLiveActivity } from 'expo-widgets'
+
+          type NowPlayingProps = {
+            title: string
+            artist: string
+          }
+
+          const NowPlayingLayout = (props: NowPlayingProps) => {
+            'widget'
+            const title = props.title || '未在播放'
+            const artist = props.artist || ''
+            const artwork = <Image systemName="music.note" color="#FB7299" />
+            const titleText = <Text modifiers={[font({ weight: 'semibold', size: 15 })]}>{title}</Text>
+            const artistText = artist ? <Text modifiers={[foregroundStyle('#B8B8BD')]}>{artist}</Text> : null
+
+            return {
+              banner: (
+                <HStack spacing={12} modifiers={[padding({ all: 16 }), activityBackgroundTint('#00000059'), widgetURL('bbplayer://')]}>
+                  {artwork}
+                  <VStack alignment="leading" spacing={5}>
+                    {titleText}
+                    {artistText}
+                  </VStack>
+                </HStack>
+              ),
+              compactLeading: artwork,
+              compactTrailing: <Image systemName="music.note" color="#FB7299" />,
+              minimal: <Image systemName="music.note" color="#FB7299" />,
+              expandedLeading: artwork,
+              expandedCenter: (
+                <VStack alignment="leading" spacing={4}>
+                  {titleText}
+                  {artistText}
+                </VStack>
+              ),
+              expandedTrailing: <Image systemName="music.note" color="#FB7299" />,
+              expandedBottom: <Text modifiers={[padding({ horizontal: 12, vertical: 4 }), foregroundStyle('#B8B8BD')]}>BBPlayer</Text>,
+            }
+          }
+
+          export const NowPlayingActivity = createLiveActivity<NowPlayingProps>('NowPlayingActivity', NowPlayingLayout)
+          `, "utf8");
+
+          fs.writeFileSync(bridgePath, `import { useEffect } from 'react'
+          import { usePlayerStore } from '@/hooks/stores/usePlayerStore'
+          import { NowPlayingActivity } from './NowPlayingActivity'
+
+          type ActivityProps = { title: string; artist: string }
+          let activeActivity: any = null
+
+          export function NowPlayingActivityBridge() {
+            const track = usePlayerStore((state) => state.internalTrack)
+            useEffect(() => {
+              let cancelled = false
+              const sync = async () => {
+                if (!track) {
+                  const instances = NowPlayingActivity.getInstances()
+                  await Promise.all(instances.map((instance) => instance.end('immediate').catch(() => undefined)))
+                  activeActivity = null
+                  return
+                }
+                const rawArtist = (track as any).artist ?? (track as any).artists
+                const artist = typeof rawArtist === 'string'
+                  ? rawArtist
+                  : Array.isArray(rawArtist)
+                    ? rawArtist.map((item) => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ')
+                    : rawArtist?.name ?? ''
+                const props: ActivityProps = {
+                  title: (track as any).title || '未在播放',
+                  artist,
+                }
+                if (!activeActivity) activeActivity = NowPlayingActivity.getInstances()[0] ?? null
+                if (cancelled) return
+                if (activeActivity) await activeActivity.update(props)
+                else activeActivity = NowPlayingActivity.start(props, 'bbplayer://')
+              }
+              void sync().catch((error) => console.warn('[LiveActivity] sync failed', error))
+              return () => { cancelled = true }
+            }, [track])
+            return null
+          }
+          `, "utf8");
+
+          const barPath = "apps/mobile/src/components/NowPlayingBar.tsx";
+          if (!fs.existsSync(barPath)) throw new Error("未找到 NowPlayingBar.tsx，无法挂载 Live Activity 状态桥接");
+          let bar = fs.readFileSync(barPath, "utf8");
+          if (!bar.includes("NowPlayingActivityBridge")) {
+            if (!/import\s+.*useCurrentTrack.*from\s+['"]@\/hooks\/player\/useCurrentTrack['"]/.test(bar)) {
+              throw new Error("NowPlayingBar.tsx 中未找到 useCurrentTrack 导入，无法定位播放器状态入口");
+            }
+            bar = bar.replace(
+              /(import\s+.*useCurrentTrack.*from\s+['"]@\/hooks\/player\/useCurrentTrack['"];?)/,
+              "$1\nimport { NowPlayingActivityBridge } from '@/features/live-activity/NowPlayingActivityBridge'"
+            );
+            bar = bar.replace(
+              "return <NowPlayingBarContent shouldShow={shouldShow} />",
+              "return (<>\n    <NowPlayingActivityBridge />\n    <NowPlayingBarContent shouldShow={shouldShow} />\n  </>)"
+            );
+            if (!bar.includes("<NowPlayingActivityBridge />")) throw new Error("未能在 NowPlayingBar.tsx 挂载 Live Activity 状态桥接");
+            fs.writeFileSync(barPath, bar, "utf8");
+          }
+          console.log("✅ 已注册 NowPlayingActivity，并随播放器当前曲目同步启动、更新或结束实时活动");
           EOF
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
         run: |
