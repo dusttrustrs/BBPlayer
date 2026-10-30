@@ -84,6 +84,22 @@ jobs:
         with:
           run_install: false
 
+      - name: 📦 为 apps/mobile 预注入 expo-widgets 依赖
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkgPath = "apps/mobile/package.json";
+            if (fs.existsSync(pkgPath)) {
+              const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+              pkg.dependencies = pkg.dependencies || {};
+              if (!pkg.dependencies["expo-widgets"]) {
+                pkg.dependencies["expo-widgets"] = "~57.0.27";
+                fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), "utf8");
+                console.log("✅ 已向 apps/mobile/package.json 注入 expo-widgets 依赖");
+              }
+            }
+          '
+
       - name: 📥 安装依赖
         env:
           LEFTHOOK: "0" # 跳过 Git Hook 安装
@@ -4695,6 +4711,7 @@ jobs:
           const fs = require("fs");
           const path = require("path");
           const activityPath = "apps/mobile/src/features/live-activity/NowPlayingActivity.tsx";
+          const widgetsIndexPath = "apps/mobile/widgets/index.tsx";
           const bridgePath = "apps/mobile/src/features/live-activity/NowPlayingActivityBridge.tsx";
           const appConfigPath = "apps/mobile/app.config.ts";
 
@@ -4706,7 +4723,7 @@ jobs:
               }
               appConfig = appConfig.replace(
                 /plugins\s*:\s*\[/,
-                "plugins: [['expo-widgets', { groupIdentifier: 'group.com.roitium.bbplayer', frequentUpdates: true }],"
+                "plugins: [['expo-widgets', { src: './widgets', groupIdentifier: 'group.com.roitium.bbplayer', frequentUpdates: true }],"
               );
               fs.writeFileSync(appConfigPath, appConfig, "utf8");
               console.log("✅ 已向 app.config.ts 注册 expo-widgets Live Activity 扩展");
@@ -4714,32 +4731,47 @@ jobs:
           }
 
           fs.mkdirSync(path.dirname(activityPath), { recursive: true });
+          fs.mkdirSync(path.dirname(widgetsIndexPath), { recursive: true });
 
-          // 核心修复：1. 显式设置白色高对比度前景与深色毛玻璃背景，杜绝锁屏纯白/看不清文字
-          // 2. 补齐 Dynamic Island expanded 所有区域（expandedLeading, expandedCenter, expandedTrailing, expandedBottom）
-          fs.writeFileSync(activityPath, "import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui'\nimport { activityBackgroundTint, font, foregroundStyle, padding, widgetURL } from '@expo/ui/swift-ui/modifiers'\nimport { createLiveActivity, type LiveActivityLayout } from 'expo-widgets'\n\nexport type NowPlayingProps = {\n  title: string\n  artist: string\n}\n\nfunction NowPlayingWidgetLayout(props: NowPlayingProps): LiveActivityLayout {\n  'widget'\n  const title = props.title || '正在播放'\n  const artist = props.artist || 'BBPlayer'\n  const titleText = (\n    <Text modifiers={[font({ weight: 'semibold', size: 15 }), foregroundStyle('#FFFFFF')]}>\n      {title}\n    </Text>\n  )\n  const artistText = (\n    <Text modifiers={[font({ size: 13 }), foregroundStyle('#D1D1D6')]}>\n      {artist}\n    </Text>\n  )\n\n  return {\n    banner: (\n      <HStack\n        spacing={12}\n        modifiers={[\n          padding({ horizontal: 16, vertical: 14 }),\n          activityBackgroundTint('#1C1C1E'),\n          widgetURL('bbplayer://'),\n        ]}\n      >\n        <Image systemName=\"music.note\" color=\"#FB7299\" />\n        <VStack alignment=\"leading\" spacing={3}>\n          {titleText}\n          {artistText}\n        </VStack>\n        <HStack spacing={8} modifiers={[padding({ leading: 8 })]}>\n          <Image systemName=\"waveform\" color=\"#FB7299\" />\n        </HStack>\n      </HStack>\n    ),\n    compactLeading: <Image systemName=\"music.note\" color=\"#FB7299\" />,\n    compactTrailing: <Image systemName=\"waveform\" color=\"#FB7299\" />,\n    minimal: <Image systemName=\"music.note\" color=\"#FB7299\" />,\n    expandedLeading: <Image systemName=\"music.note\" color=\"#FB7299\" />,\n    expandedCenter: (\n      <VStack alignment=\"leading\" spacing={3}>\n        {titleText}\n        {artistText}\n      </VStack>\n    ),\n    expandedTrailing: <Image systemName=\"waveform\" color=\"#FB7299\" />,\n    expandedBottom: (\n      <HStack modifiers={[padding({ horizontal: 12, vertical: 4 })]}>\n        <Text modifiers={[font({ size: 12 }), foregroundStyle('#8E8E93')]}>BBPlayer 正在播放</Text>\n      </HStack>\n    ),\n  }\n}\n\nexport const NowPlayingActivity = createLiveActivity<NowPlayingProps>('NowPlayingActivity', NowPlayingWidgetLayout)\nexport default NowPlayingActivity\n", "utf8");
+          // 核心修复1：写入 NowPlayingActivity.tsx
+          fs.writeFileSync(activityPath, "import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui'\nimport { activityBackgroundTint, font, foregroundStyle, padding, widgetURL } from '@expo/ui/swift-ui/modifiers'\nimport { createLiveActivity, type LiveActivityLayout } from 'expo-widgets'\n\nexport type NowPlayingProps = {\n  title: string\n  artist: string\n}\n\nexport function NowPlayingWidgetLayout(props: NowPlayingProps): LiveActivityLayout {\n  'widget'\n  const title = props.title || '正在播放'\n  const artist = props.artist || 'BBPlayer'\n  const titleText = (\n    <Text modifiers={[font({ weight: 'semibold', size: 15 }), foregroundStyle('#FFFFFF')]}>\n      {title}\n    </Text>\n  )\n  const artistText = (\n    <Text modifiers={[font({ size: 13 }), foregroundStyle('#D1D1D6')]}>\n      {artist}\n    </Text>\n  )\n\n  return {\n    banner: (\n      <HStack\n        spacing={12}\n        modifiers={[\n          padding({ horizontal: 16, vertical: 14 }),\n          activityBackgroundTint('#1C1C1E'),\n          widgetURL('bbplayer://'),\n        ]}\n      >\n        <Image systemName=\"music.note\" color=\"#FB7299\" />\n        <VStack alignment=\"leading\" spacing={3}>\n          {titleText}\n          {artistText}\n        </VStack>\n        <HStack spacing={8} modifiers={[padding({ leading: 8 })]}>\n          <Image systemName=\"waveform\" color=\"#FB7299\" />\n        </HStack>\n      </HStack>\n    ),\n    compactLeading: <Image systemName=\"music.note\" color=\"#FB7299\" />,\n    compactTrailing: <Image systemName=\"waveform\" color=\"#FB7299\" />,\n    minimal: <Image systemName=\"music.note\" color=\"#FB7299\" />,\n    expandedLeading: <Image systemName=\"music.note\" color=\"#FB7299\" />,\n    expandedCenter: (\n      <VStack alignment=\"leading\" spacing={3}>\n        {titleText}\n        {artistText}\n      </VStack>\n    ),\n    expandedTrailing: <Image systemName=\"waveform\" color=\"#FB7299\" />,\n    expandedBottom: (\n      <HStack modifiers={[padding({ horizontal: 12, vertical: 4 })]}>\n        <Text modifiers={[font({ size: 12 }), foregroundStyle('#8E8E93')]}>BBPlayer 正在播放</Text>\n      </HStack>\n    ),\n  }\n}\n\nexport const NowPlayingActivity = createLiveActivity<NowPlayingProps>('NowPlayingActivity', NowPlayingWidgetLayout)\nexport default NowPlayingActivity\n", "utf8");
 
-          // 核心修复：添加 await NowPlayingActivity.start(...) 并带 update 降级保护，防止 activeActivity 变为未决议的 Promise 实例导致崩溃
-          fs.writeFileSync(bridgePath, "import { useEffect } from 'react'\nimport { usePlayerStore } from '@/hooks/stores/usePlayerStore'\nimport { NowPlayingActivity, type NowPlayingProps } from './NowPlayingActivity'\n\nlet activeActivity: any = null\n\nexport function NowPlayingActivityBridge() {\n  const track = usePlayerStore((state) => state.internalTrack)\n\n  useEffect(() => {\n    let cancelled = false\n\n    const sync = async () => {\n      try {\n        if (!track) {\n          const instances = NowPlayingActivity.getInstances()\n          await Promise.all(instances.map((instance) => instance.end('immediate').catch(() => undefined)))\n          activeActivity = null\n          return\n        }\n\n        const rawArtist = (track as any).artist ?? (track as any).artists\n        const artist = typeof rawArtist === 'string'\n          ? rawArtist\n          : Array.isArray(rawArtist)\n            ? rawArtist.map((item: any) => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ')\n            : rawArtist?.name ?? ''\n\n        const props: NowPlayingProps = {\n          title: (track as any).title || '正在播放',\n          artist: artist || 'BBPlayer',\n        }\n\n        if (!activeActivity) {\n          const instances = NowPlayingActivity.getInstances()\n          if (instances.length > 0) {\n            activeActivity = instances[0]\n          }\n        }\n\n        if (cancelled) return\n\n        let updated = false\n        if (activeActivity) {\n          try {\n            await activeActivity.update(props)\n            updated = true\n          } catch {\n            activeActivity = null\n          }\n        }\n\n        if (!updated) {\n          activeActivity = await NowPlayingActivity.start(props, 'bbplayer://')\n        }\n      } catch (error) {\n        console.warn('[LiveActivity] sync failed:', error)\n      }\n    }\n\n    void sync()\n\n    return () => {\n      cancelled = true\n    }\n  }, [track])\n\n  return null\n}\n", "utf8");
+          // 核心修复2：写入 widgets/index.tsx，这是 expo-widgets 独立 JS 运行时的官方入口，避免生成空白 bundle
+          fs.writeFileSync(widgetsIndexPath, "'widget'\nimport { NowPlayingWidgetLayout, NowPlayingActivity } from '../src/features/live-activity/NowPlayingActivity'\n\nexport default NowPlayingWidgetLayout\nexport { NowPlayingActivity }\n", "utf8");
 
-          const barPath = "apps/mobile/src/components/NowPlayingBar.tsx";
-          if (!fs.existsSync(barPath)) throw new Error("未找到 NowPlayingBar.tsx，无法挂载 Live Activity 状态桥接");
-          let bar = fs.readFileSync(barPath, "utf8");
-          if (!bar.includes("NowPlayingActivityBridge")) {
-            if (!/import\s+.*useCurrentTrack.*from\s+['"]@\/hooks\/player\/useCurrentTrack['"]/.test(bar)) {
-              throw new Error("NowPlayingBar.tsx 中未找到 useCurrentTrack 导入，无法定位播放器状态入口");
+          // 核心修复3：写入 NowPlayingActivityBridge.tsx，带全量多实例去重与生命周期管理
+          fs.writeFileSync(bridgePath, "import { useEffect } from 'react'\nimport { usePlayerStore } from '@/hooks/stores/usePlayerStore'\nimport { NowPlayingActivity, type NowPlayingProps } from './NowPlayingActivity'\n\nlet activeActivity: any = null\n\nexport function NowPlayingActivityBridge() {\n  const track = usePlayerStore((state) => state.internalTrack)\n\n  // 1. 启动时主动清除多余/残留的历史活动，彻底杜绝出现两个或多个空白窗口\n  useEffect(() => {\n    const cleanupDuplicates = async () => {\n      try {\n        const instances = NowPlayingActivity.getInstances()\n        if (instances.length > 0 && !track) {\n          await Promise.all(instances.map((i: any) => i.end('immediate').catch(() => undefined)))\n          activeActivity = null\n        } else if (instances.length > 1) {\n          await Promise.all(instances.slice(1).map((i: any) => i.end('immediate').catch(() => undefined)))\n          activeActivity = instances[0]\n        }\n      } catch (err) {\n        console.warn('[LiveActivity] cleanup error:', err)\n      }\n    }\n    void cleanupDuplicates()\n  }, [])\n\n  // 2. 随播放曲目状态单例同步\n  useEffect(() => {\n    let cancelled = false\n\n    const sync = async () => {\n      try {\n        if (!track) {\n          const instances = NowPlayingActivity.getInstances()\n          await Promise.all(instances.map((instance: any) => instance.end('immediate').catch(() => undefined)))\n          activeActivity = null\n          return\n        }\n\n        const rawArtist = (track as any).artist ?? (track as any).artists\n        const artist = typeof rawArtist === 'string'\n          ? rawArtist\n          : Array.isArray(rawArtist)\n            ? rawArtist.map((item: any) => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ')\n            : rawArtist?.name ?? ''\n\n        const props: NowPlayingProps = {\n          title: (track as any).title || '正在播放',\n          artist: artist || 'BBPlayer',\n        }\n\n        // 强力去重：关闭所有除第一个以外的多余实例\n        const instances = NowPlayingActivity.getInstances()\n        if (instances.length > 1) {\n          await Promise.all(instances.slice(1).map((i: any) => i.end('immediate').catch(() => undefined)))\n        }\n\n        if (!activeActivity && instances.length > 0) {\n          activeActivity = instances[0]\n        }\n\n        if (cancelled) return\n\n        let updated = false\n        if (activeActivity) {\n          try {\n            await activeActivity.update(props)\n            updated = true\n          } catch {\n            activeActivity = null\n          }\n        }\n\n        if (!updated && !cancelled) {\n          activeActivity = await NowPlayingActivity.start(props, 'bbplayer://')\n        }\n      } catch (error) {\n        console.warn('[LiveActivity] sync failed:', error)\n      }\n    }\n\n    void sync()\n\n    return () => {\n      cancelled = true\n    }\n  }, [track])\n\n  return null\n}\n", "utf8");
+
+          // 核心修复4：将 NowPlayingActivityBridge 作为单例挂载到全局唯一的 _layout.tsx
+          const layoutPath = "apps/mobile/src/app/_layout.tsx";
+          if (fs.existsSync(layoutPath)) {
+            let layout = fs.readFileSync(layoutPath, "utf8");
+            if (!layout.includes("NowPlayingActivityBridge")) {
+              layout = layout.replace(
+                "import NowPlayingBar from '@/components/NowPlayingBar'",
+                "import NowPlayingBar from '@/components/NowPlayingBar'\nimport { NowPlayingActivityBridge } from '@/features/live-activity/NowPlayingActivityBridge'"
+              );
+              layout = layout.replace(
+                "<NowPlayingBar />",
+                "<NowPlayingActivityBridge />\n\t\t\t\t<NowPlayingBar />"
+              );
+              fs.writeFileSync(layoutPath, layout, "utf8");
+              console.log("✅ 已在根路由 _layout.tsx 挂载唯一 NowPlayingActivityBridge 单例");
             }
-            bar = bar.replace(
-              /(import\s+.*useCurrentTrack.*from\s+['"]@\/hooks\/player\/useCurrentTrack['"];?)/,
-              "$1\nimport { NowPlayingActivityBridge } from '@/features/live-activity/NowPlayingActivityBridge'"
-            );
-            bar = bar.replace(
-              "return <NowPlayingBarContent shouldShow={shouldShow} />",
-              "return (<>\n    <NowPlayingActivityBridge />\n    <NowPlayingBarContent shouldShow={shouldShow} />\n  </>)"
-            );
-            if (!bar.includes("<NowPlayingActivityBridge />")) throw new Error("未能在 NowPlayingBar.tsx 挂载 Live Activity 状态桥接");
-            fs.writeFileSync(barPath, bar, "utf8");
           }
+
+          // 还原 NowPlayingBar.tsx，防止子组件重复实例化
+          const barPath = "apps/mobile/src/components/NowPlayingBar.tsx";
+          if (fs.existsSync(barPath)) {
+            let bar = fs.readFileSync(barPath, "utf8");
+            if (bar.includes("NowPlayingActivityBridge")) {
+              bar = bar.replace(/import\s+{\s*NowPlayingActivityBridge\s*}\s+from\s+['"]@\/features\/live-activity\/NowPlayingActivityBridge['"];?\n?/, "");
+              bar = bar.replace(/<NowPlayingActivityBridge\s*\/>\n?\s*/, "");
+              fs.writeFileSync(barPath, bar, "utf8");
+              console.log("✅ 已从 NowPlayingBar.tsx 清理冗余挂载");
+            }
+          }
+
           console.log("✅ 已注册 NowPlayingActivity，并随播放器当前曲目同步启动、更新或结束实时活动");
           EOF
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
