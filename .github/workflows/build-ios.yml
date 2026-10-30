@@ -4717,144 +4717,10 @@ jobs:
 
           // 核心修复：1. 显式设置白色高对比度前景与深色毛玻璃背景，杜绝锁屏纯白/看不清文字
           // 2. 补齐 Dynamic Island expanded 所有区域（expandedLeading, expandedCenter, expandedTrailing, expandedBottom）
-          const activityCode = [
-            "import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui'",
-            "import { activityBackgroundTint, font, foregroundStyle, padding, widgetURL } from '@expo/ui/swift-ui/modifiers'",
-            "import { createLiveActivity, type LiveActivityLayout } from 'expo-widgets'",
-            "",
-            "export type NowPlayingProps = {",
-            "  title: string",
-            "  artist: string",
-            "}",
-            "",
-            "function NowPlayingWidgetLayout(props: NowPlayingProps): LiveActivityLayout {",
-            "  'widget'",
-            "  const title = props.title || '正在播放'",
-            "  const artist = props.artist || 'BBPlayer'",
-            "  const artwork = <Image systemName="music.note" color="#FB7299" />",
-            "  const waveform = <Image systemName="waveform" color="#FB7299" />",
-            "  const titleText = (",
-            "    <Text modifiers={[font({ weight: 'semibold', size: 15 }), foregroundStyle('#FFFFFF')]}>",
-            "      {title}",
-            "    </Text>",
-            "  )",
-            "  const artistText = (",
-            "    <Text modifiers={[font({ size: 13 }), foregroundStyle('#D1D1D6')]}>",
-            "      {artist}",
-            "    </Text>",
-            "  )",
-            "",
-            "  return {",
-            "    banner: (",
-            "      <HStack",
-            "        spacing={12}",
-            "        modifiers={[",
-            "          padding({ horizontal: 16, vertical: 14 }),",
-            "          activityBackgroundTint('#1C1C1E'),",
-            "          widgetURL('bbplayer://'),",
-            "        ]}",
-            "      >",
-            "        {artwork}",
-            "        <VStack alignment="leading" spacing={3}>",
-            "          {titleText}",
-            "          {artistText}",
-            "        </VStack>",
-            "        <HStack spacing={8} modifiers={[padding({ leading: 8 })]}>",
-            "          {waveform}",
-            "        </HStack>",
-            "      </HStack>",
-            "    ),",
-            "    compactLeading: artwork,",
-            "    compactTrailing: waveform,",
-            "    minimal: artwork,",
-            "    expandedLeading: artwork,",
-            "    expandedCenter: (",
-            "      <VStack alignment="leading" spacing={3}>",
-            "        {titleText}",
-            "        {artistText}",
-            "      </VStack>",
-            "    ),",
-            "    expandedTrailing: waveform,",
-            "    expandedBottom: (",
-            "      <HStack modifiers={[padding({ horizontal: 12, vertical: 4 })]}>",
-            "        <Text modifiers={[font({ size: 12 }), foregroundStyle('#8E8E93')]}>BBPlayer 正在播放</Text>",
-            "      </HStack>",
-            "    ),",
-            "  }",
-            "}",
-            "",
-            "export const NowPlayingActivity = createLiveActivity<NowPlayingProps>('NowPlayingActivity', NowPlayingWidgetLayout)",
-            "export default NowPlayingActivity",
-            ""
-          ].join('\n');
-          fs.writeFileSync(activityPath, activityCode, "utf8");
+          fs.writeFileSync(activityPath, "import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui'\nimport { activityBackgroundTint, font, foregroundStyle, padding, widgetURL } from '@expo/ui/swift-ui/modifiers'\nimport { createLiveActivity, type LiveActivityLayout } from 'expo-widgets'\n\nexport type NowPlayingProps = {\n  title: string\n  artist: string\n}\n\nfunction NowPlayingWidgetLayout(props: NowPlayingProps): LiveActivityLayout {\n  'widget'\n  const title = props.title || '正在播放'\n  const artist = props.artist || 'BBPlayer'\n  const artwork = <Image systemName=\"music.note\" color=\"#FB7299\" />\n  const waveform = <Image systemName=\"waveform\" color=\"#FB7299\" />\n  const titleText = (\n    <Text modifiers={[font({ weight: 'semibold', size: 15 }), foregroundStyle('#FFFFFF')]}>\n      {title}\n    </Text>\n  )\n  const artistText = (\n    <Text modifiers={[font({ size: 13 }), foregroundStyle('#D1D1D6')]}>\n      {artist}\n    </Text>\n  )\n\n  return {\n    banner: (\n      <HStack\n        spacing={12}\n        modifiers={[\n          padding({ horizontal: 16, vertical: 14 }),\n          activityBackgroundTint('#1C1C1E'),\n          widgetURL('bbplayer://'),\n        ]}\n      >\n        {artwork}\n        <VStack alignment=\"leading\" spacing={3}>\n          {titleText}\n          {artistText}\n        </VStack>\n        <HStack spacing={8} modifiers={[padding({ leading: 8 })]}>\n          {waveform}\n        </HStack>\n      </HStack>\n    ),\n    compactLeading: artwork,\n    compactTrailing: waveform,\n    minimal: artwork,\n    expandedLeading: artwork,\n    expandedCenter: (\n      <VStack alignment=\"leading\" spacing={3}>\n        {titleText}\n        {artistText}\n      </VStack>\n    ),\n    expandedTrailing: waveform,\n    expandedBottom: (\n      <HStack modifiers={[padding({ horizontal: 12, vertical: 4 })]}>\n        <Text modifiers={[font({ size: 12 }), foregroundStyle('#8E8E93')]}>BBPlayer 正在播放</Text>\n      </HStack>\n    ),\n  }\n}\n\nexport const NowPlayingActivity = createLiveActivity<NowPlayingProps>('NowPlayingActivity', NowPlayingWidgetLayout)\nexport default NowPlayingActivity\n", "utf8");
 
           // 核心修复：添加 await NowPlayingActivity.start(...) 防止 activeActivity 变为未决议的 Promise 实例，导致后续 update 崩溃
-          const bridgeCode = [
-            "import { useEffect } from 'react'",
-            "import { usePlayerStore } from '@/hooks/stores/usePlayerStore'",
-            "import { NowPlayingActivity, type NowPlayingProps } from './NowPlayingActivity'",
-            "",
-            "let activeActivity: any = null",
-            "",
-            "export function NowPlayingActivityBridge() {",
-            "  const track = usePlayerStore((state) => state.internalTrack)",
-            "",
-            "  useEffect(() => {",
-            "    let cancelled = false",
-            "",
-            "    const sync = async () => {",
-            "      try {",
-            "        if (!track) {",
-            "          const instances = NowPlayingActivity.getInstances()",
-            "          await Promise.all(instances.map((instance) => instance.end('immediate').catch(() => undefined)))",
-            "          activeActivity = null",
-            "          return",
-            "        }",
-            "",
-            "        const rawArtist = (track as any).artist ?? (track as any).artists",
-            "        const artist = typeof rawArtist === 'string'",
-            "          ? rawArtist",
-            "          : Array.isArray(rawArtist)",
-            "            ? rawArtist.map((item: any) => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ')",
-            "            : rawArtist?.name ?? ''",
-            "",
-            "        const props: NowPlayingProps = {",
-            "          title: (track as any).title || '正在播放',",
-            "          artist: artist || 'BBPlayer',",
-            "        }",
-            "",
-            "        if (!activeActivity) {",
-            "          const instances = NowPlayingActivity.getInstances()",
-            "          if (instances.length > 0) {",
-            "            activeActivity = instances[0]",
-            "          }",
-            "        }",
-            "",
-            "        if (cancelled) return",
-            "",
-            "        if (activeActivity) {",
-            "          await activeActivity.update(props)",
-            "        } else {",
-            "          activeActivity = await NowPlayingActivity.start(props, 'bbplayer://')",
-            "        }",
-            "      } catch (error) {",
-            "        console.warn('[LiveActivity] sync failed:', error)",
-            "      }",
-            "    }",
-            "",
-            "    void sync()",
-            "",
-            "    return () => {",
-            "      cancelled = true",
-            "    }",
-            "  }, [track])",
-            "",
-            "  return null",
-            "}",
-            ""
-          ].join('\n');
-          fs.writeFileSync(bridgePath, bridgeCode, "utf8");
+          fs.writeFileSync(bridgePath, "import { useEffect } from 'react'\nimport { usePlayerStore } from '@/hooks/stores/usePlayerStore'\nimport { NowPlayingActivity, type NowPlayingProps } from './NowPlayingActivity'\n\nlet activeActivity: any = null\n\nexport function NowPlayingActivityBridge() {\n  const track = usePlayerStore((state) => state.internalTrack)\n\n  useEffect(() => {\n    let cancelled = false\n\n    const sync = async () => {\n      try {\n        if (!track) {\n          const instances = NowPlayingActivity.getInstances()\n          await Promise.all(instances.map((instance) => instance.end('immediate').catch(() => undefined)))\n          activeActivity = null\n          return\n        }\n\n        const rawArtist = (track as any).artist ?? (track as any).artists\n        const artist = typeof rawArtist === 'string'\n          ? rawArtist\n          : Array.isArray(rawArtist)\n            ? rawArtist.map((item: any) => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ')\n            : rawArtist?.name ?? ''\n\n        const props: NowPlayingProps = {\n          title: (track as any).title || '正在播放',\n          artist: artist || 'BBPlayer',\n        }\n\n        if (!activeActivity) {\n          const instances = NowPlayingActivity.getInstances()\n          if (instances.length > 0) {\n            activeActivity = instances[0]\n          }\n        }\n\n        if (cancelled) return\n\n        if (activeActivity) {\n          await activeActivity.update(props)\n        } else {\n          activeActivity = await NowPlayingActivity.start(props, 'bbplayer://')\n        }\n      } catch (error) {\n        console.warn('[LiveActivity] sync failed:', error)\n      }\n    }\n\n    void sync()\n\n    return () => {\n      cancelled = true\n    }\n  }, [track])\n\n  return null\n}\n", "utf8");
 
           const barPath = "apps/mobile/src/components/NowPlayingBar.tsx";
           if (!fs.existsSync(barPath)) throw new Error("未找到 NowPlayingBar.tsx，无法挂载 Live Activity 状态桥接");
@@ -5259,73 +5125,72 @@ jobs:
       - name: 🧩 修复 ExpoWidgets.bundle 嵌套并确保嵌入 Widget 扩展
         run: |
           cd apps/mobile/ios
-          node -e '
-            const fs = require("fs");
-            const path = require("path");
+          node << 'EOF'
+          const fs = require("fs");
+          const path = require("path");
 
-            console.log("🔍 正在检查并修复 ExpoWidgets.bundle 嵌套问题 (Expo Issue #43646)...");
+          console.log("🔍 正在检查并修复 ExpoWidgets.bundle 嵌套问题 (Expo Issue #43646)...");
 
-            function flattenBundle(dir) {
-              if (!fs.existsSync(dir)) return;
-              const entries = fs.readdirSync(dir);
-              for (const entry of entries) {
-                const full = path.join(dir, entry);
-                try {
-                  const stat = fs.statSync(full);
-                  if (entry === "ExpoWidgets.bundle" && stat.isDirectory()) {
-                    const nested = path.join(full, "ExpoWidgets.bundle");
-                    if (fs.existsSync(nested) && fs.statSync(nested).isDirectory()) {
-                      console.log("⚡ 发现嵌套目录:", nested, "-> 正在平铺到:", full);
-                      const innerItems = fs.readdirSync(nested);
-                      for (const item of innerItems) {
-                        const src = path.join(nested, item);
-                        const dst = path.join(full, item);
-                        if (!fs.existsSync(dst)) {
-                          fs.cpSync(src, dst, { recursive: true });
-                          console.log("  -> 提取:", item);
-                        }
+          function flattenBundle(dir) {
+            if (!fs.existsSync(dir)) return;
+            const entries = fs.readdirSync(dir);
+            for (const entry of entries) {
+              const full = path.join(dir, entry);
+              try {
+                const stat = fs.statSync(full);
+                if (entry === "ExpoWidgets.bundle" && stat.isDirectory()) {
+                  const nested = path.join(full, "ExpoWidgets.bundle");
+                  if (fs.existsSync(nested) && fs.statSync(nested).isDirectory()) {
+                    console.log("⚡ 发现嵌套目录:", nested, "-> 正在平铺到:", full);
+                    const innerItems = fs.readdirSync(nested);
+                    for (const item of innerItems) {
+                      const src = path.join(nested, item);
+                      const dst = path.join(full, item);
+                      if (!fs.existsSync(dst)) {
+                        fs.cpSync(src, dst, { recursive: true });
+                        console.log("  -> 提取:", item);
                       }
-                      fs.rmSync(nested, { recursive: true, force: true });
-                      console.log("✅ 成功移除嵌套子目录");
                     }
-                  } else if (stat.isDirectory()) {
-                    flattenBundle(full);
+                    fs.rmSync(nested, { recursive: true, force: true });
+                    console.log("✅ 成功移除嵌套子目录");
                   }
-                } catch (e) {}
-              }
-            }
-
-            flattenBundle("build/Build/Products/Release-iphoneos");
-
-            // 确保 .appex 内部和 App/PlugIns 内部均包含完备的 ExpoWidgets.bundle
-            const productsDir = "build/Build/Products/Release-iphoneos";
-            const candidateBundle = path.join(productsDir, "ExpoWidgets/ExpoWidgets.bundle");
-            if (fs.existsSync(candidateBundle)) {
-              console.log("✅ 找到构建产物 ExpoWidgets.bundle:", candidateBundle);
-              const appexList = [];
-              function findAppex(dir) {
-                if (!fs.existsSync(dir)) return;
-                const items = fs.readdirSync(dir);
-                for (const it of items) {
-                  const p = path.join(dir, it);
-                  if (it.endsWith(".appex")) appexList.push(p);
-                  else if (fs.statSync(p).isDirectory() && !it.endsWith(".framework") && !it.endsWith(".bundle")) {
-                    findAppex(p);
-                  }
+                } else if (stat.isDirectory()) {
+                  flattenBundle(full);
                 }
-              }
-              findAppex(productsDir);
-              for (const appexPath of appexList) {
-                const targetBundle = path.join(appexPath, "ExpoWidgets.bundle");
-                if (!fs.existsSync(targetBundle)) {
-                  console.log("⚡ 正在将 ExpoWidgets.bundle 注入扩展目标:", targetBundle);
-                  fs.cpSync(candidateBundle, targetBundle, { recursive: true });
-                  console.log("✅ 注入成功");
+              } catch (e) {}
+            }
+          }
+
+          flattenBundle("build/Build/Products/Release-iphoneos");
+
+          // 确保 .appex 内部和 App/PlugIns 内部均包含完备的 ExpoWidgets.bundle
+          const productsDir = "build/Build/Products/Release-iphoneos";
+          const candidateBundle = path.join(productsDir, "ExpoWidgets/ExpoWidgets.bundle");
+          if (fs.existsSync(candidateBundle)) {
+            console.log("✅ 找到构建产物 ExpoWidgets.bundle:", candidateBundle);
+            const appexList = [];
+            function findAppex(dir) {
+              if (!fs.existsSync(dir)) return;
+              const items = fs.readdirSync(dir);
+              for (const it of items) {
+                const p = path.join(dir, it);
+                if (it.endsWith(".appex")) appexList.push(p);
+                else if (fs.statSync(p).isDirectory() && !it.endsWith(".framework") && !it.endsWith(".bundle")) {
+                  findAppex(p);
                 }
               }
             }
-          '
-
+            findAppex(productsDir);
+            for (const appexPath of appexList) {
+              const targetBundle = path.join(appexPath, "ExpoWidgets.bundle");
+              if (!fs.existsSync(targetBundle)) {
+                console.log("⚡ 正在将 ExpoWidgets.bundle 注入扩展目标:", targetBundle);
+                fs.cpSync(candidateBundle, targetBundle, { recursive: true });
+                console.log("✅ 注入成功");
+              }
+            }
+          }
+          EOF
       - name: 📦 打包为未签名 .ipa
         run: |
           cd apps/mobile/ios
