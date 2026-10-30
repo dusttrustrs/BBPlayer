@@ -4568,82 +4568,97 @@ jobs:
           // 38. 在「设置-外观与主题」中添加全局自定义主题色（预设红橙黄绿蓝靛紫与调色盘弹窗），保留深色/浅色背景
           const matColorsPath = "apps/mobile/src/lib/theme/material3Colors.ts";
           if (fs.existsSync(matColorsPath)) {
-            let mc = fs.readFileSync(matColorsPath, "utf8");
-            if (!mc.includes("customPrimaryColor")) {
-              mc = mc.replace(
-                "import { Color } from 'expo-router'",
-                "import ColorJS from 'color'\nimport { Color } from 'expo-router'"
-              );
-              // 注意：原函数体已声明 const d / const fallback，必须连同签名一起替换，否则会出现 "Identifier 'd' has already been declared"
-              mc = mc.replace(
-                /export function buildMaterial3PaperColors\(\s*colorScheme: ColorSchemeName,?\s*\): MD3Colors \{\s*const d = Color\.android\.dynamic\s*const fallback =\s*colorScheme === 'dark' \? MD3DarkTheme\.colors : MD3LightTheme\.colors\s*/,
-                () => [
-                  "export function buildMaterial3PaperColors(",
-                  "  colorScheme: ColorSchemeName,",
-                  "  customPrimaryColor?: string,",
-                  "): MD3Colors {",
-                  "  const isDark = colorScheme === 'dark'",
-                  "  const d = Color.android.dynamic",
-                  "  const fallback = isDark ? MD3DarkTheme.colors : MD3LightTheme.colors",
-                  "",
-                  "  let primary = (d.primary as string) ?? fallback.primary",
-                  "  let primaryContainer = (d.primaryContainer as string) ?? fallback.primaryContainer",
-                  "  let onPrimary = (d.onPrimary as string) ?? fallback.onPrimary",
-                  "  let onPrimaryContainer = (d.onPrimaryContainer as string) ?? fallback.onPrimaryContainer",
-                  "  let secondary = (d.secondary as string) ?? fallback.secondary",
-                  "  let secondaryContainer = (d.secondaryContainer as string) ?? fallback.secondaryContainer",
-                  "  let onSecondaryContainer = (d.onSecondaryContainer as string) ?? fallback.onSecondaryContainer",
-                  "  let inversePrimary = (d.primaryInverse as string) ?? fallback.inversePrimary",
-                  "",
-                  "  if (customPrimaryColor) {",
-                  "    try {",
-                  "      const c = ColorJS(customPrimaryColor)",
-                  "      if (isDark) {",
-                  "        const lum = c.luminosity()",
-                  "        const tuned = lum < 0.15 ? c.lighten(0.35) : c",
-                  "        primary = tuned.hex()",
-                  "        onPrimary = tuned.isDark() ? '#ffffff' : '#000000'",
-                  "        primaryContainer = c.mix(ColorJS('#000000'), 0.6).hex()",
-                  "        onPrimaryContainer = c.lighten(0.5).hex()",
-                  "        secondary = c.mix(ColorJS(fallback.secondary), 0.35).hex()",
-                  "        secondaryContainer = c.mix(ColorJS('#1d1b20'), 0.75).hex()",
-                  "        onSecondaryContainer = c.lighten(0.4).hex()",
-                  "        inversePrimary = c.darken(0.2).hex()",
-                  "      } else {",
-                  "        primary = c.hex()",
-                  "        onPrimary = c.isDark() ? '#ffffff' : '#000000'",
-                  "        primaryContainer = c.mix(ColorJS('#ffffff'), 0.85).hex()",
-                  "        onPrimaryContainer = c.darken(0.5).hex()",
-                  "        secondary = c.mix(ColorJS(fallback.secondary), 0.35).hex()",
-                  "        secondaryContainer = c.mix(ColorJS('#ffffff'), 0.88).hex()",
-                  "        onSecondaryContainer = c.darken(0.4).hex()",
-                  "        inversePrimary = c.lighten(0.3).hex()",
-                  "      }",
-                  "    } catch {}",
-                  "  }",
-                  "",
-                  "  "
-                ].join("\n")
-              );
-              if (!mc.includes("customPrimaryColor?: string")) {
-                console.error("❌ material3Colors.ts 签名替换失败，上游源码可能已变更");
-                process.exit(1);
-              }
-              mc = mc.replace(
-                "return {\n\t\tprimary: (d.primary as string) ?? fallback.primary,\n\t\tprimaryContainer:\n\t\t\t(d.primaryContainer as string) ?? fallback.primaryContainer,\n\t\tsecondary: (d.secondary as string) ?? fallback.secondary,\n\t\tsecondaryContainer:\n\t\t\t(d.secondaryContainer as string) ?? fallback.secondaryContainer,\n\t\ttertiary: (d.tertiary as string) ?? fallback.tertiary,",
-                "return {\n    primary,\n    primaryContainer,\n    secondary,\n    secondaryContainer,\n    tertiary: (d.tertiary as string) ?? fallback.tertiary,"
-              );
-              mc = mc.replace(
-                "\n\t\tonPrimary: (d.onPrimary as string) ?? fallback.onPrimary,\n\t\tonPrimaryContainer:\n\t\t\t(d.onPrimaryContainer as string) ?? fallback.onPrimaryContainer,\n\t\tonSecondary: (d.onSecondary as string) ?? fallback.onSecondary,\n\t\tonSecondaryContainer:\n\t\t\t(d.onSecondaryContainer as string) ?? fallback.onSecondaryContainer,",
-                "\n    onPrimary,\n    onPrimaryContainer,\n    onSecondary: (d.onSecondary as string) ?? fallback.onSecondary,\n    onSecondaryContainer,"
-              );
-              mc = mc.replace(
-                "inversePrimary: (d.primaryInverse as string) ?? fallback.inversePrimary,",
-                "inversePrimary,"
-              );
-              fs.writeFileSync(matColorsPath, mc, "utf8");
-              console.log("✅ 已在 material3Colors.ts 中实现自定义主题色支持");
-            }
+            const newMatColorsCode = [
+              "import ColorJS from 'color'",
+              "import { Color } from 'expo-router'",
+              "import type { ColorSchemeName } from 'react-native'",
+              "import { MD3DarkTheme, MD3LightTheme } from 'react-native-paper'",
+              "import type { MD3Colors } from 'react-native-paper/lib/typescript/types'",
+              "",
+              "export function buildMaterial3PaperColors(",
+              "  colorScheme: ColorSchemeName,",
+              "  customPrimaryColor?: string,",
+              "): MD3Colors {",
+              "  const isDark = colorScheme === 'dark'",
+              "  const d = Color.android.dynamic",
+              "  const fallback = isDark ? MD3DarkTheme.colors : MD3LightTheme.colors",
+              "",
+              "  let primary = (d.primary as string) ?? fallback.primary",
+              "  let primaryContainer = (d.primaryContainer as string) ?? fallback.primaryContainer",
+              "  let onPrimary = (d.onPrimary as string) ?? fallback.onPrimary",
+              "  let onPrimaryContainer = (d.onPrimaryContainer as string) ?? fallback.onPrimaryContainer",
+              "  let secondary = (d.secondary as string) ?? fallback.secondary",
+              "  let secondaryContainer = (d.secondaryContainer as string) ?? fallback.secondaryContainer",
+              "  let onSecondaryContainer = (d.onSecondaryContainer as string) ?? fallback.onSecondaryContainer",
+              "  let inversePrimary = (d.primaryInverse as string) ?? fallback.inversePrimary",
+              "",
+              "  if (customPrimaryColor) {",
+              "    try {",
+              "      const c = ColorJS(customPrimaryColor)",
+              "      if (isDark) {",
+              "        const lum = c.luminosity()",
+              "        const tuned = lum < 0.15 ? c.lighten(0.35) : c",
+              "        primary = tuned.hex()",
+              "        onPrimary = tuned.isDark() ? '#ffffff' : '#000000'",
+              "        primaryContainer = c.mix(ColorJS('#000000'), 0.6).hex()",
+              "        onPrimaryContainer = c.lighten(0.5).hex()",
+              "        secondary = c.mix(ColorJS(fallback.secondary), 0.35).hex()",
+              "        secondaryContainer = c.mix(ColorJS('#1d1b20'), 0.75).hex()",
+              "        onSecondaryContainer = c.lighten(0.4).hex()",
+              "        inversePrimary = c.darken(0.2).hex()",
+              "      } else {",
+              "        primary = c.hex()",
+              "        onPrimary = c.isDark() ? '#ffffff' : '#000000'",
+              "        primaryContainer = c.mix(ColorJS('#ffffff'), 0.85).hex()",
+              "        onPrimaryContainer = c.darken(0.5).hex()",
+              "        secondary = c.mix(ColorJS(fallback.secondary), 0.35).hex()",
+              "        secondaryContainer = c.mix(ColorJS('#ffffff'), 0.88).hex()",
+              "        onSecondaryContainer = c.darken(0.4).hex()",
+              "        inversePrimary = c.lighten(0.3).hex()",
+              "      }",
+              "    } catch {}",
+              "  }",
+              "",
+              "  return {",
+              "    primary,",
+              "    primaryContainer,",
+              "    secondary,",
+              "    secondaryContainer,",
+              "    tertiary: (d.tertiary as string) ?? fallback.tertiary,",
+              "    tertiaryContainer: (d.tertiaryContainer as string) ?? fallback.tertiaryContainer,",
+              "    surface: (d.surface as string) ?? fallback.surface,",
+              "    surfaceVariant: (d.surfaceVariant as string) ?? fallback.surfaceVariant,",
+              "    background: (d.background as string) ?? fallback.background,",
+              "    error: (d.error as string) ?? fallback.error,",
+              "    errorContainer: (d.errorContainer as string) ?? fallback.errorContainer,",
+              "    onPrimary,",
+              "    onPrimaryContainer,",
+              "    onSecondary: (d.onSecondary as string) ?? fallback.onSecondary,",
+              "    onSecondaryContainer,",
+              "    onTertiary: (d.onTertiary as string) ?? fallback.onTertiary,",
+              "    onTertiaryContainer: (d.onTertiaryContainer as string) ?? fallback.onTertiaryContainer,",
+              "    onSurface: (d.onSurface as string) ?? fallback.onSurface,",
+              "    onSurfaceVariant: (d.onSurfaceVariant as string) ?? fallback.onSurfaceVariant,",
+              "    onError: (d.onError as string) ?? fallback.onError,",
+              "    onErrorContainer: (d.onErrorContainer as string) ?? fallback.onErrorContainer,",
+              "    onBackground: (d.onBackground as string) ?? fallback.onBackground,",
+              "    outline: (d.outline as string) ?? fallback.outline,",
+              "    outlineVariant: (d.outlineVariant as string) ?? fallback.outlineVariant,",
+              "    inverseSurface: (d.surfaceInverse as string) ?? fallback.inverseSurface,",
+              "    inverseOnSurface: (d.onSurfaceInverse as string) ?? fallback.inverseOnSurface,",
+              "    inversePrimary,",
+              "    shadow: fallback.shadow,",
+              "    scrim: fallback.scrim,",
+              "    surfaceDisabled: fallback.surfaceDisabled,",
+              "    onSurfaceDisabled: fallback.onSurfaceDisabled,",
+              "    backdrop: fallback.backdrop,",
+              "    elevation: fallback.elevation,",
+              "  }",
+              "}",
+              ""
+            ].join("\n");
+            fs.writeFileSync(matColorsPath, newMatColorsCode, "utf8");
+            console.log("✅ 已安全生成 material3Colors.ts，杜绝重复声明错误");
           }
           const themePickerPath = "apps/mobile/src/features/theme/ThemeColorPickerModal.tsx";
           if (!fs.existsSync(themePickerPath)) {
@@ -4682,6 +4697,7 @@ jobs:
           const activityPath = "apps/mobile/src/features/live-activity/NowPlayingActivity.tsx";
           const bridgePath = "apps/mobile/src/features/live-activity/NowPlayingActivityBridge.tsx";
           const appConfigPath = "apps/mobile/app.config.ts";
+
           if (fs.existsSync(appConfigPath)) {
             let appConfig = fs.readFileSync(appConfigPath, "utf8");
             if (!appConfig.includes("expo-widgets")) {
@@ -4696,91 +4712,149 @@ jobs:
               console.log("✅ 已向 app.config.ts 注册 expo-widgets Live Activity 扩展");
             }
           }
+
           fs.mkdirSync(path.dirname(activityPath), { recursive: true });
-          fs.writeFileSync(activityPath, `import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui'
-          import { activityBackgroundTint, font, foregroundStyle, padding, widgetURL } from '@expo/ui/swift-ui/modifiers'
-          import { createLiveActivity } from 'expo-widgets'
 
-          type NowPlayingProps = {
-            title: string
-            artist: string
-          }
+          // 核心修复：1. 显式设置白色高对比度前景与深色毛玻璃背景，杜绝锁屏纯白/看不清文字
+          // 2. 补齐 Dynamic Island expanded 所有区域（expandedLeading, expandedCenter, expandedTrailing, expandedBottom）
+          const activityCode = [
+            "import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui'",
+            "import { activityBackgroundTint, font, foregroundStyle, padding, widgetURL } from '@expo/ui/swift-ui/modifiers'",
+            "import { createLiveActivity, type LiveActivityLayout } from 'expo-widgets'",
+            "",
+            "export type NowPlayingProps = {",
+            "  title: string",
+            "  artist: string",
+            "}",
+            "",
+            "function NowPlayingWidgetLayout(props: NowPlayingProps): LiveActivityLayout {",
+            "  'widget'",
+            "  const title = props.title || '正在播放'",
+            "  const artist = props.artist || 'BBPlayer'",
+            "  const artwork = <Image systemName="music.note" color="#FB7299" />",
+            "  const waveform = <Image systemName="waveform" color="#FB7299" />",
+            "  const titleText = (",
+            "    <Text modifiers={[font({ weight: 'semibold', size: 15 }), foregroundStyle('#FFFFFF')]}>",
+            "      {title}",
+            "    </Text>",
+            "  )",
+            "  const artistText = (",
+            "    <Text modifiers={[font({ size: 13 }), foregroundStyle('#D1D1D6')]}>",
+            "      {artist}",
+            "    </Text>",
+            "  )",
+            "",
+            "  return {",
+            "    banner: (",
+            "      <HStack",
+            "        spacing={12}",
+            "        modifiers={[",
+            "          padding({ horizontal: 16, vertical: 14 }),",
+            "          activityBackgroundTint('#1C1C1E'),",
+            "          widgetURL('bbplayer://'),",
+            "        ]}",
+            "      >",
+            "        {artwork}",
+            "        <VStack alignment="leading" spacing={3}>",
+            "          {titleText}",
+            "          {artistText}",
+            "        </VStack>",
+            "        <HStack spacing={8} modifiers={[padding({ leading: 8 })]}>",
+            "          {waveform}",
+            "        </HStack>",
+            "      </HStack>",
+            "    ),",
+            "    compactLeading: artwork,",
+            "    compactTrailing: waveform,",
+            "    minimal: artwork,",
+            "    expandedLeading: artwork,",
+            "    expandedCenter: (",
+            "      <VStack alignment="leading" spacing={3}>",
+            "        {titleText}",
+            "        {artistText}",
+            "      </VStack>",
+            "    ),",
+            "    expandedTrailing: waveform,",
+            "    expandedBottom: (",
+            "      <HStack modifiers={[padding({ horizontal: 12, vertical: 4 })]}>",
+            "        <Text modifiers={[font({ size: 12 }), foregroundStyle('#8E8E93')]}>BBPlayer 正在播放</Text>",
+            "      </HStack>",
+            "    ),",
+            "  }",
+            "}",
+            "",
+            "export const NowPlayingActivity = createLiveActivity<NowPlayingProps>('NowPlayingActivity', NowPlayingWidgetLayout)",
+            "export default NowPlayingActivity",
+            ""
+          ].join('\n');
+          fs.writeFileSync(activityPath, activityCode, "utf8");
 
-          const NowPlayingLayout = (props: NowPlayingProps) => {
-            'widget'
-            const title = props.title || '未在播放'
-            const artist = props.artist || ''
-            const artwork = <Image systemName="music.note" color="#FB7299" />
-            const titleText = <Text modifiers={[font({ weight: 'semibold', size: 15 })]}>{title}</Text>
-            const artistText = artist ? <Text modifiers={[foregroundStyle('#B8B8BD')]}>{artist}</Text> : null
-
-            return {
-              banner: (
-                <HStack spacing={12} modifiers={[padding({ all: 16 }), activityBackgroundTint('#00000059'), widgetURL('bbplayer://')]}>
-                  {artwork}
-                  <VStack alignment="leading" spacing={5}>
-                    {titleText}
-                    {artistText}
-                  </VStack>
-                </HStack>
-              ),
-              compactLeading: artwork,
-              compactTrailing: <Image systemName="music.note" color="#FB7299" />,
-              minimal: <Image systemName="music.note" color="#FB7299" />,
-              expandedLeading: artwork,
-              expandedCenter: (
-                <VStack alignment="leading" spacing={4}>
-                  {titleText}
-                  {artistText}
-                </VStack>
-              ),
-              expandedTrailing: <Image systemName="music.note" color="#FB7299" />,
-              expandedBottom: <Text modifiers={[padding({ horizontal: 12, vertical: 4 }), foregroundStyle('#B8B8BD')]}>BBPlayer</Text>,
-            }
-          }
-
-          export const NowPlayingActivity = createLiveActivity<NowPlayingProps>('NowPlayingActivity', NowPlayingLayout)
-          `, "utf8");
-
-          fs.writeFileSync(bridgePath, `import { useEffect } from 'react'
-          import { usePlayerStore } from '@/hooks/stores/usePlayerStore'
-          import { NowPlayingActivity } from './NowPlayingActivity'
-
-          type ActivityProps = { title: string; artist: string }
-          let activeActivity: any = null
-
-          export function NowPlayingActivityBridge() {
-            const track = usePlayerStore((state) => state.internalTrack)
-            useEffect(() => {
-              let cancelled = false
-              const sync = async () => {
-                if (!track) {
-                  const instances = NowPlayingActivity.getInstances()
-                  await Promise.all(instances.map((instance) => instance.end('immediate').catch(() => undefined)))
-                  activeActivity = null
-                  return
-                }
-                const rawArtist = (track as any).artist ?? (track as any).artists
-                const artist = typeof rawArtist === 'string'
-                  ? rawArtist
-                  : Array.isArray(rawArtist)
-                    ? rawArtist.map((item) => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ')
-                    : rawArtist?.name ?? ''
-                const props: ActivityProps = {
-                  title: (track as any).title || '未在播放',
-                  artist,
-                }
-                if (!activeActivity) activeActivity = NowPlayingActivity.getInstances()[0] ?? null
-                if (cancelled) return
-                if (activeActivity) await activeActivity.update(props)
-                else activeActivity = NowPlayingActivity.start(props, 'bbplayer://')
-              }
-              void sync().catch((error) => console.warn('[LiveActivity] sync failed', error))
-              return () => { cancelled = true }
-            }, [track])
-            return null
-          }
-          `, "utf8");
+          // 核心修复：添加 await NowPlayingActivity.start(...) 防止 activeActivity 变为未决议的 Promise 实例，导致后续 update 崩溃
+          const bridgeCode = [
+            "import { useEffect } from 'react'",
+            "import { usePlayerStore } from '@/hooks/stores/usePlayerStore'",
+            "import { NowPlayingActivity, type NowPlayingProps } from './NowPlayingActivity'",
+            "",
+            "let activeActivity: any = null",
+            "",
+            "export function NowPlayingActivityBridge() {",
+            "  const track = usePlayerStore((state) => state.internalTrack)",
+            "",
+            "  useEffect(() => {",
+            "    let cancelled = false",
+            "",
+            "    const sync = async () => {",
+            "      try {",
+            "        if (!track) {",
+            "          const instances = NowPlayingActivity.getInstances()",
+            "          await Promise.all(instances.map((instance) => instance.end('immediate').catch(() => undefined)))",
+            "          activeActivity = null",
+            "          return",
+            "        }",
+            "",
+            "        const rawArtist = (track as any).artist ?? (track as any).artists",
+            "        const artist = typeof rawArtist === 'string'",
+            "          ? rawArtist",
+            "          : Array.isArray(rawArtist)",
+            "            ? rawArtist.map((item: any) => typeof item === 'string' ? item : item?.name).filter(Boolean).join(', ')",
+            "            : rawArtist?.name ?? ''",
+            "",
+            "        const props: NowPlayingProps = {",
+            "          title: (track as any).title || '正在播放',",
+            "          artist: artist || 'BBPlayer',",
+            "        }",
+            "",
+            "        if (!activeActivity) {",
+            "          const instances = NowPlayingActivity.getInstances()",
+            "          if (instances.length > 0) {",
+            "            activeActivity = instances[0]",
+            "          }",
+            "        }",
+            "",
+            "        if (cancelled) return",
+            "",
+            "        if (activeActivity) {",
+            "          await activeActivity.update(props)",
+            "        } else {",
+            "          activeActivity = await NowPlayingActivity.start(props, 'bbplayer://')",
+            "        }",
+            "      } catch (error) {",
+            "        console.warn('[LiveActivity] sync failed:', error)",
+            "      }",
+            "    }",
+            "",
+            "    void sync()",
+            "",
+            "    return () => {",
+            "      cancelled = true",
+            "    }",
+            "  }, [track])",
+            "",
+            "  return null",
+            "}",
+            ""
+          ].join('\n');
+          fs.writeFileSync(bridgePath, bridgeCode, "utf8");
 
           const barPath = "apps/mobile/src/components/NowPlayingBar.tsx";
           if (!fs.existsSync(barPath)) throw new Error("未找到 NowPlayingBar.tsx，无法挂载 Live Activity 状态桥接");
@@ -5181,6 +5255,76 @@ jobs:
           name: build-ios-error-log
           path: ${{ runner.temp }}/build-ios.log
           retention-days: 7
+
+      - name: 🧩 修复 ExpoWidgets.bundle 嵌套并确保嵌入 Widget 扩展
+        run: |
+          cd apps/mobile/ios
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+
+            console.log("🔍 正在检查并修复 ExpoWidgets.bundle 嵌套问题 (Expo Issue #43646)...");
+
+            function flattenBundle(dir) {
+              if (!fs.existsSync(dir)) return;
+              const entries = fs.readdirSync(dir);
+              for (const entry of entries) {
+                const full = path.join(dir, entry);
+                try {
+                  const stat = fs.statSync(full);
+                  if (entry === "ExpoWidgets.bundle" && stat.isDirectory()) {
+                    const nested = path.join(full, "ExpoWidgets.bundle");
+                    if (fs.existsSync(nested) && fs.statSync(nested).isDirectory()) {
+                      console.log("⚡ 发现嵌套目录:", nested, "-> 正在平铺到:", full);
+                      const innerItems = fs.readdirSync(nested);
+                      for (const item of innerItems) {
+                        const src = path.join(nested, item);
+                        const dst = path.join(full, item);
+                        if (!fs.existsSync(dst)) {
+                          fs.cpSync(src, dst, { recursive: true });
+                          console.log("  -> 提取:", item);
+                        }
+                      }
+                      fs.rmSync(nested, { recursive: true, force: true });
+                      console.log("✅ 成功移除嵌套子目录");
+                    }
+                  } else if (stat.isDirectory()) {
+                    flattenBundle(full);
+                  }
+                } catch (e) {}
+              }
+            }
+
+            flattenBundle("build/Build/Products/Release-iphoneos");
+
+            // 确保 .appex 内部和 App/PlugIns 内部均包含完备的 ExpoWidgets.bundle
+            const productsDir = "build/Build/Products/Release-iphoneos";
+            const candidateBundle = path.join(productsDir, "ExpoWidgets/ExpoWidgets.bundle");
+            if (fs.existsSync(candidateBundle)) {
+              console.log("✅ 找到构建产物 ExpoWidgets.bundle:", candidateBundle);
+              const appexList = [];
+              function findAppex(dir) {
+                if (!fs.existsSync(dir)) return;
+                const items = fs.readdirSync(dir);
+                for (const it of items) {
+                  const p = path.join(dir, it);
+                  if (it.endsWith(".appex")) appexList.push(p);
+                  else if (fs.statSync(p).isDirectory() && !it.endsWith(".framework") && !it.endsWith(".bundle")) {
+                    findAppex(p);
+                  }
+                }
+              }
+              findAppex(productsDir);
+              for (const appexPath of appexList) {
+                const targetBundle = path.join(appexPath, "ExpoWidgets.bundle");
+                if (!fs.existsSync(targetBundle)) {
+                  console.log("⚡ 正在将 ExpoWidgets.bundle 注入扩展目标:", targetBundle);
+                  fs.cpSync(candidateBundle, targetBundle, { recursive: true });
+                  console.log("✅ 注入成功");
+                }
+              }
+            }
+          '
 
       - name: 📦 打包为未签名 .ipa
         run: |
