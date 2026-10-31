@@ -2759,6 +2759,16 @@ jobs:
             ) {
               throw new Error("AppProviders 主题色联动补丁未能匹配上游源码");
             }
+                        if (providersCode.includes("Appearance.setColorScheme(pureWhiteBackground ? 'light' : 'unspecified')")) {
+              providersCode = providersCode.replace(
+                "Appearance.setColorScheme(pureWhiteBackground ? 'light' : 'unspecified')",
+                "try { Appearance.setColorScheme(pureWhiteBackground ? 'light' : 'unspecified') } catch {}"
+              );
+              providersCode = providersCode.replace(
+                "return () => Appearance.setColorScheme('unspecified')",
+                "return () => { try { Appearance.setColorScheme('unspecified') } catch {} }"
+              );
+            }
             fs.writeFileSync(providersPath, providersCode, "utf8");
             console.log("✅ 已在 providers.tsx 中注入 NavigationThemeProvider、根容器背景色与持久化主题色联动");
           }
@@ -4727,6 +4737,24 @@ jobs:
               "import type { ColorSchemeName } from 'react-native'",
               "import { MD3DarkTheme, MD3LightTheme } from 'react-native-paper'",
               "import type { MD3Colors } from 'react-native-paper/lib/typescript/types'",
+              "",
+              "// 使用固定浅色前景，避免系统深色动态颜色在纯白背景上失去对比度。",
+              "export function buildPureWhitePaperColors(): MD3Colors {",
+              "  return {",
+              "    ...MD3LightTheme.colors,",
+              "    background: '#FFFFFF',",
+              "    surface: '#FFFFFF',",
+              "    surfaceVariant: '#FFFFFF',",
+              "    elevation: {",
+              "      level0: 'transparent',",
+              "      level1: '#FFFFFF',",
+              "      level2: '#FFFFFF',",
+              "      level3: '#FFFFFF',",
+              "      level4: '#FFFFFF',",
+              "      level5: '#FFFFFF',",
+              "    },",
+              "  }",
+              "}",
               "",
               "export function buildMaterial3PaperColors(",
               "  colorScheme: ColorSchemeName,",
