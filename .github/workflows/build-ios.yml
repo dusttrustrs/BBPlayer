@@ -2346,97 +2346,101 @@ jobs:
               );
               btnCenterCode = btnCenterCode.replace(
                 /isMode\('text'\)\s*\?\s*icon \|\| loading[\s\S]*?:\s*styles\.md3Label,/,
-                `isMode('text')
-                    ? hasAddons
-                      ? styles.md3LabelTextAddons
-                      : styles.md3LabelText
-                    : hasAddons
-                      ? styles.md3LabelAddons
-                      : styles.md3Label,`
+                [
+                  "isMode('text')",
+                  "                    ? hasAddons",
+                  "                      ? styles.md3LabelTextAddons",
+                  "                      : styles.md3LabelText",
+                  "                    : hasAddons",
+                  "                      ? styles.md3LabelAddons",
+                  "                      : styles.md3Label,"
+                ].join("\n")
               );
-              const newBtnStyles = `const styles = StyleSheet.create({
-\tsurface: {
-\t\tminWidth: 64,
-\t\tborderStyle: 'solid',
-\t},
-\tbutton: {
-\t\tminWidth: 64,
-\t\tborderStyle: 'solid',
-\t\toverflow: 'hidden',
-\t\tjustifyContent: 'center',
-\t\talignItems: 'center',
-\t},
-\tcompact: {
-\t\tminWidth: 'auto',
-\t},
-\tcontent: {
-\t\tflexDirection: 'row',
-\t\talignItems: 'center',
-\t\tjustifyContent: 'center',
-\t\twidth: '100%',
-\t\theight: '100%',
-\t\tpaddingHorizontal: 16,
-\t},
-\tcompactContent: {
-\t\tpaddingHorizontal: 8,
-\t},
-\ticon: {
-\t\tmarginRight: 8,
-\t},
-\ticonReverse: {
-\t\tmarginLeft: 8,
-\t},
-\tmd3Icon: {
-\t\tmarginRight: 8,
-\t},
-\tmd3IconCompact: {
-\t\tmarginRight: 6,
-\t},
-\tmd3IconReverse: {
-\t\tmarginLeft: 8,
-\t},
-\tmd3IconReverseCompact: {
-\t\tmarginLeft: 6,
-\t},
-\tmd3IconTextMode: {
-\t\tmarginRight: 6,
-\t},
-\tmd3IconTextModeCompact: {
-\t\tmarginRight: 4,
-\t},
-\tmd3IconReverseTextMode: {
-\t\tmarginLeft: 6,
-\t},
-\tmd3IconReverseTextModeCompact: {
-\t\tmarginLeft: 4,
-\t},
-\tlabel: {
-\t\ttextAlign: 'center',
-\t\tletterSpacing: 0.1,
-\t\tlineHeight: 20,
-\t\tmarginVertical: 9,
-\t\tmarginHorizontal: 0,
-\t},
-\tcompactLabel: {
-\t\tmarginHorizontal: 0,
-\t},
-\tmd3Label: {
-\t\tmarginVertical: 10,
-\t\tmarginHorizontal: 8,
-\t},
-\tmd3LabelAddons: {
-\t\tmarginVertical: 10,
-\t\tmarginHorizontal: 0,
-\t},
-\tmd3LabelText: {
-\t\tmarginHorizontal: 6,
-\t},
-\tmd3LabelTextAddons: {
-\t\tmarginHorizontal: 0,
-\t},
-})
-
-export default Button`;
+              const newBtnStyles = [
+                "const styles = StyleSheet.create({",
+                "\tsurface: {",
+                "\t\tminWidth: 64,",
+                "\t\tborderStyle: 'solid',",
+                "\t},",
+                "\tbutton: {",
+                "\t\tminWidth: 64,",
+                "\t\tborderStyle: 'solid',",
+                "\t\toverflow: 'hidden',",
+                "\t\tjustifyContent: 'center',",
+                "\t\talignItems: 'center',",
+                "\t},",
+                "\tcompact: {",
+                "\t\tminWidth: 'auto',",
+                "\t},",
+                "\tcontent: {",
+                "\t\tflexDirection: 'row',",
+                "\t\talignItems: 'center',",
+                "\t\tjustifyContent: 'center',",
+                "\t\twidth: '100%',",
+                "\t\theight: '100%',",
+                "\t\tpaddingHorizontal: 16,",
+                "\t},",
+                "\tcompactContent: {",
+                "\t\tpaddingHorizontal: 8,",
+                "\t},",
+                "\ticon: {",
+                "\t\tmarginRight: 8,",
+                "\t},",
+                "\ticonReverse: {",
+                "\t\tmarginLeft: 8,",
+                "\t},",
+                "\tmd3Icon: {",
+                "\t\tmarginRight: 8,",
+                "\t},",
+                "\tmd3IconCompact: {",
+                "\t\tmarginRight: 6,",
+                "\t},",
+                "\tmd3IconReverse: {",
+                "\t\tmarginLeft: 8,",
+                "\t},",
+                "\tmd3IconReverseCompact: {",
+                "\t\tmarginLeft: 6,",
+                "\t},",
+                "\tmd3IconTextMode: {",
+                "\t\tmarginRight: 6,",
+                "\t},",
+                "\tmd3IconTextModeCompact: {",
+                "\t\tmarginRight: 4,",
+                "\t},",
+                "\tmd3IconReverseTextMode: {",
+                "\t\tmarginLeft: 6,",
+                "\t},",
+                "\tmd3IconReverseTextModeCompact: {",
+                "\t\tmarginLeft: 4,",
+                "\t},",
+                "\tlabel: {",
+                "\t\ttextAlign: 'center',",
+                "\t\tletterSpacing: 0.1,",
+                "\t\tlineHeight: 20,",
+                "\t\tmarginVertical: 9,",
+                "\t\tmarginHorizontal: 0,",
+                "\t},",
+                "\tcompactLabel: {",
+                "\t\tmarginHorizontal: 0,",
+                "\t},",
+                "\tmd3Label: {",
+                "\t\tmarginVertical: 10,",
+                "\t\tmarginHorizontal: 8,",
+                "\t},",
+                "\tmd3LabelAddons: {",
+                "\t\tmarginVertical: 10,",
+                "\t\tmarginHorizontal: 0,",
+                "\t},",
+                "\tmd3LabelText: {",
+                "\t\tmarginHorizontal: 6,",
+                "\t},",
+                "\tmd3LabelTextAddons: {",
+                "\t\tmarginHorizontal: 0,",
+                "\t},",
+                "})",
+                "",
+                "export default Button"
+              ].join("\n");
               btnCenterCode = btnCenterCode.replace(/const styles = StyleSheet\.create\(\{[\s\S]*?\}\)\s*export default Button/, newBtnStyles);
               fs.writeFileSync(btnPath, btnCenterCode, "utf8");
               console.log("✅ 已为 Button.tsx 增强绝对居中与对称布局");
@@ -2534,9 +2538,9 @@ export default Button`;
                 "            onValueChange={(value) => {",
                 "              setSettings({",
                 "                enableSystemMediaControl: value,",
-                "                allowSimultaneousPlayback: !value,",
+                "                allowSimultaneousPlayback: Boolean(!value),",
                 "              })",
-                "              void Orpheus.setAllowSimultaneousPlayback(!value)",
+                "              void Orpheus.setAllowSimultaneousPlayback(Boolean(!value))",
                 "            }}",
                 "          />",
                 "        </View>",
@@ -2552,7 +2556,7 @@ export default Button`;
                 "            onValueChange={(value) => {",
                 "              setSettings({",
                 "                allowSimultaneousPlayback: value,",
-                "                enableSystemMediaControl: !value,",
+                "                enableSystemMediaControl: Boolean(!value),",
                 "              })",
                 "              void Orpheus.setAllowSimultaneousPlayback(value)",
                 "            }}",
@@ -2639,15 +2643,17 @@ export default Button`;
 
               trackInfoCode = trackInfoCode.replace(
                 /<TouchableOpacity[\s\S]*?<SquircleView/,
-                `<TouchableOpacity
-								activeOpacity={0.8}
-								onPress={podcast ? undefined : onPressCover}
-								disabled={podcast}
-								style={{ width: coverSize, height: coverSize }}
-								testID='player-cover'
-							>
-								<Animated.View style={[{ width: coverSize, height: coverSize }, !podcast && animatedRotateStyle]}>
-									<SquircleView`
+                [
+                  "<TouchableOpacity",
+                  "								activeOpacity={0.8}",
+                  "								onPress={podcast ? undefined : onPressCover}",
+                  "								disabled={podcast}",
+                  "								style={{ width: coverSize, height: coverSize }}",
+                  "								testID='player-cover'",
+                  "							>",
+                  "								<Animated.View style={[{ width: coverSize, height: coverSize }, !podcast && animatedRotateStyle]}>",
+                  "									<SquircleView"
+                ].join("\n")
               );
 
               trackInfoCode = trackInfoCode.replace(
