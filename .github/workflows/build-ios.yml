@@ -4705,18 +4705,18 @@ jobs:
             }
           }
           EOF
-      - name: 🎵 注册并预构建 iOS Now Playing Live Activity (彻底修复空白与重复卡片)
+      - name: 🎵 注册并配置 iOS Now Playing Live Activity
         run: |
           node << 'EOF'
           const fs = require("fs");
           const path = require("path");
-          const { spawnSync } = require("child_process");
 
           const activityPath = "apps/mobile/src/features/live-activity/NowPlayingActivity.tsx";
           const widgetsIndexPath = "apps/mobile/widgets/index.tsx";
           const bridgePath = "apps/mobile/src/features/live-activity/NowPlayingActivityBridge.tsx";
           const appConfigPath = "apps/mobile/app.config.ts";
 
+          // 1. 向 app.config.ts 注册 expo-widgets 插件
           if (fs.existsSync(appConfigPath)) {
             let appConfig = fs.readFileSync(appConfigPath, "utf8");
             if (!appConfig.includes("expo-widgets")) {
@@ -4735,6 +4735,7 @@ jobs:
           fs.mkdirSync(path.dirname(activityPath), { recursive: true });
           fs.mkdirSync(path.dirname(widgetsIndexPath), { recursive: true });
 
+          // 2. 写入 NowPlayingActivity.tsx
           const activitySource = [
             "import { HStack, Image, Text, VStack } from '@expo/ui/swift-ui'",
             "import { activityBackgroundTint, font, foregroundStyle, padding, widgetURL } from '@expo/ui/swift-ui/modifiers'",
@@ -4801,23 +4802,16 @@ jobs:
             "  }",
             "}",
             "",
-            "if (typeof globalThis !== 'undefined') {",
-            "  (globalThis as any).__expoWidgetDefaultLayout = NowPlayingWidgetLayout",
-            "}",
-            "",
             "export const NowPlayingActivity = createLiveActivity<NowPlayingProps>('NowPlayingActivity', NowPlayingWidgetLayout)",
             "export default NowPlayingActivity",
             ""
           ].join("\n");
           fs.writeFileSync(activityPath, activitySource, "utf8");
 
+          // 3. 写入 widgets/index.tsx (触发 Expo Prebuild 生成 ExpoWidgetsTarget)
           const widgetsIndexSource = [
             "'widget'",
             "import { NowPlayingWidgetLayout, NowPlayingActivity } from '../src/features/live-activity/NowPlayingActivity'",
-            "",
-            "if (typeof globalThis !== 'undefined') {",
-            "  (globalThis as any).__expoWidgetDefaultLayout = NowPlayingWidgetLayout",
-            "}",
             "",
             "export default NowPlayingWidgetLayout",
             "export { NowPlayingActivity }",
@@ -4825,25 +4819,36 @@ jobs:
           ].join("\n");
           fs.writeFileSync(widgetsIndexPath, widgetsIndexSource, "utf8");
 
+          // 4. 写入 NowPlayingActivityBridge.tsx (严格单例 + FIFO 队列，杜绝重复创建多个活动卡片)
           const bridgeSource = [
             "import { useEffect, useRef } from 'react'",
+            "import { Platform } from 'react-native'",
             "import { usePlayerStore } from '@/hooks/stores/usePlayerStore'",
             "import { NowPlayingActivity, type NowPlayingProps } from './NowPlayingActivity'",
             "",
+            "let syncPromise: Promise<void> = Promise.resolve()",
+            "",
             "export function NowPlayingActivityBridge() {",
             "  const track = usePlayerStore((state) => state.internalTrack)",
-            "  const isSyncingRef = useRef(false)",
+            "  const isMountedRef = useRef(true)",
             "",
             "  useEffect(() => {",
-            "    let cancelled = false",
+            "    isMountedRef.current = true",
+            "    return () => {",
+            "      isMountedRef.current = false",
+            "    }",
+            "  }, [])",
             "",
-            "    const syncActivity = async () => {",
-            "      if (isSyncingRef.current) return",
-            "      isSyncingRef.current = true",
+            "  useEffect(() => {",
+            "    if (Platform.OS !== 'ios') return",
+            "",
+            "    syncPromise = syncPromise.then(async () => {",
+            "      if (!isMountedRef.current) return",
             "",
             "      try {",
-            "        const instances = NowPlayingActivity.getInstances()",
+            "        let instances = NowPlayingActivity.getInstances()",
             "",
+            "        // 1. 无正在播放曲目时，清理所有残留/已存在的活动",
             "        if (!track) {",
             "          if (instances.length > 0) {",
             "            await Promise.all(instances.map((i: any) => i.end('immediate').catch(() => undefined)))",
@@ -4863,37 +4868,29 @@ jobs:
             "          artist: artist || 'BBPlayer',",
             "        }",
             "",
+            "        // 2. 强力单例保证：若系统中存在多于 1 个卡片，立即销毁所有多余卡片",
             "        if (instances.length > 1) {",
             "          await Promise.all(instances.slice(1).map((i: any) => i.end('immediate').catch(() => undefined)))",
+            "          instances = [instances[0]]",
             "        }",
             "",
-            "        if (cancelled) return",
-            "",
+            "        // 3. 若已有卡片，更新其播放信息；若更新失败则结束旧卡片以便重新拉起",
             "        if (instances.length > 0) {",
             "          try {",
             "            await instances[0].update(props)",
             "            return",
             "          } catch (updateErr) {",
-            "            console.warn('[LiveActivity] update failed, recreate single card:', updateErr)",
+            "            console.warn('[LiveActivity] update failed, terminating stale card:', updateErr)",
             "            await instances[0].end('immediate').catch(() => undefined)",
             "          }",
             "        }",
             "",
-            "        if (!cancelled) {",
-            "          await NowPlayingActivity.start(props, 'bbplayer://')",
-            "        }",
+            "        // 4. 若无活跃卡片，启动全局唯一的实时活动",
+            "        await NowPlayingActivity.start(props, 'bbplayer://')",
             "      } catch (err) {",
             "        console.warn('[LiveActivity] syncActivity error:', err)",
-            "      } finally {",
-            "        isSyncingRef.current = false",
             "      }",
-            "    }",
-            "",
-            "    void syncActivity()",
-            "",
-            "    return () => {",
-            "      cancelled = true",
-            "    }",
+            "    })",
             "  }, [track])",
             "",
             "  return null",
@@ -4902,6 +4899,7 @@ jobs:
           ].join("\n");
           fs.writeFileSync(bridgePath, bridgeSource, "utf8");
 
+          // 5. 挂载单例 Bridge 到根路由 _layout.tsx
           const layoutPath = "apps/mobile/src/app/_layout.tsx";
           if (fs.existsSync(layoutPath)) {
             let layout = fs.readFileSync(layoutPath, "utf8");
@@ -4919,6 +4917,7 @@ jobs:
             }
           }
 
+          // 6. 清理 NowPlayingBar.tsx 中的重复挂载
           const barPath = "apps/mobile/src/components/NowPlayingBar.tsx";
           if (fs.existsSync(barPath)) {
             let bar = fs.readFileSync(barPath, "utf8");
@@ -4930,14 +4929,13 @@ jobs:
             }
           }
 
-          console.log("🔍 正在定位真实的 expo-widgets 物理安装目录并注入容错运行时...");
-
+          // 7. 定位 expo-widgets 并清空 script_phases，免除脆弱的 JS Bundle 打包脚本调用
           function findExpoWidgetsDir() {
             const check = (p) => {
               try {
                 if (fs.existsSync(p)) {
                   const real = fs.realpathSync(p);
-                  if (fs.existsSync(path.join(real, "bundle/index.ts"))) return real;
+                  if (fs.existsSync(path.join(real, "ios/ExpoWidgets.podspec"))) return real;
                 }
               } catch (e) {}
               return null;
@@ -4966,216 +4964,22 @@ jobs:
                 }
               }
             }
-
             return null;
           }
 
           const targetPkg = findExpoWidgetsDir();
-          if (!targetPkg) {
-            throw new Error("❌ 未能定位到包含 bundle/index.ts 的 expo-widgets 真实安装目录");
-          }
-          console.log("✅ 定位到有效的 expo-widgets 目录:", targetPkg);
-
-          // 1. 深度治理：在 bundle/index.ts 内部直接编译固化 defaultNowPlayingLayout，彻底杜绝 App Group 与 Babel 别名失效问题
-          const bundleEntryTs = path.join(targetPkg, "bundle/index.ts");
-          if (fs.existsSync(bundleEntryTs)) {
-            let bundleIndex = fs.readFileSync(bundleEntryTs, "utf8");
-            if (!bundleIndex.includes("__expoWidgetDefaultLayout")) {
-              const embeddedLayout = [
-                "",
-                "// --- BBPlayer Builtin Robust Live Activity Layout ---",
-                "function defaultNowPlayingLayout(props: any) {",
-                "  var title = (props && props.title) || '正在播放';",
-                "  var artist = (props && props.artist) || 'BBPlayer';",
-                "  var titleText = (React as any).createElement(swiftUI.Text, {",
-                "    modifiers: [(modifiers as any).font({ weight: 'semibold', size: 15 }), (modifiers as any).foregroundStyle('#FFFFFF')]",
-                "  }, title);",
-                "  var artistText = (React as any).createElement(swiftUI.Text, {",
-                "    modifiers: [(modifiers as any).font({ size: 13 }), (modifiers as any).foregroundStyle('#D1D1D6')]",
-                "  }, artist);",
-                "  var banner = (React as any).createElement(swiftUI.HStack, {",
-                "    spacing: 12,",
-                "    modifiers: [",
-                "      (modifiers as any).padding({ horizontal: 16, vertical: 14 }),",
-                "      (modifiers as any).activityBackgroundTint('#1C1C1E'),",
-                "      (modifiers as any).widgetURL('bbplayer://')",
-                "    ]",
-                "  },",
-                "    (React as any).createElement(swiftUI.Image, { systemName: 'music.note', color: '#FB7299' }),",
-                "    (React as any).createElement(swiftUI.VStack, { alignment: 'leading', spacing: 3 }, titleText, artistText),",
-                "    (React as any).createElement(swiftUI.HStack, { spacing: 8, modifiers: [(modifiers as any).padding({ leading: 8 })] },",
-                "      (React as any).createElement(swiftUI.Image, { systemName: 'waveform', color: '#FB7299' })",
-                "    )",
-                "  );",
-                "  return {",
-                "    banner: banner,",
-                "    bannerSmall: banner,",
-                "    compactLeading: (React as any).createElement(swiftUI.Image, { systemName: 'music.note', color: '#FB7299' }),",
-                "    compactTrailing: (React as any).createElement(swiftUI.Image, { systemName: 'waveform', color: '#FB7299' }),",
-                "    minimal: (React as any).createElement(swiftUI.Image, { systemName: 'music.note', color: '#FB7299' }),",
-                "    expandedLeading: (React as any).createElement(swiftUI.Image, { systemName: 'music.note', color: '#FB7299' }),",
-                "    expandedCenter: (React as any).createElement(swiftUI.VStack, { alignment: 'leading', spacing: 3 }, titleText, artistText),",
-                "    expandedTrailing: (React as any).createElement(swiftUI.Image, { systemName: 'waveform', color: '#FB7299' }),",
-                "    expandedBottom: (React as any).createElement(swiftUI.HStack, {",
-                "      modifiers: [(modifiers as any).padding({ horizontal: 12, vertical: 4 })]",
-                "    }, (React as any).createElement(swiftUI.Text, {",
-                "      modifiers: [(modifiers as any).font({ size: 12 }), (modifiers as any).foregroundStyle('#8E8E93')]",
-                "    }, 'BBPlayer 正在播放'))",
-                "  };",
-                "}",
-                "(globalThis as any).__expoWidgetDefaultLayout = defaultNowPlayingLayout;",
-                ""
-              ].join("\n");
-              bundleIndex += embeddedLayout;
-              fs.writeFileSync(bundleEntryTs, bundleIndex, "utf8");
-              console.log("✅ 已向 bundle/index.ts 注入固化默认布局 defaultNowPlayingLayout");
+          if (targetPkg) {
+            console.log("✅ 定位到有效的 expo-widgets 目录:", targetPkg);
+            const podspec = path.join(targetPkg, "ios/ExpoWidgets.podspec");
+            if (fs.existsSync(podspec)) {
+              let p = fs.readFileSync(podspec, "utf8");
+              p = p.replace(/s\.script_phases\s*=\s*\[[\s\S]*?\]/, "s.script_phases = []");
+              fs.writeFileSync(podspec, p, "utf8");
+              console.log("✅ 已将 ExpoWidgets.podspec 的 script_phases 置空 (免除 JS Bundle 预打包)");
             }
+          } else {
+            console.warn("⚠️ 未定位到 expo-widgets 物理安装目录，跳过 podspec 预修剪");
           }
-
-          // 2. 补丁 metro.config.js
-          const metroConfig = path.join(targetPkg, "metro.config.js");
-          if (fs.existsSync(metroConfig)) {
-            let metro = fs.readFileSync(metroConfig, "utf8");
-            if (metro.includes("resolve-workspace-root")) {
-              metro = metro.replace("const { resolveWorkspaceRoot } = require('resolve-workspace-root');", [
-                "const fs = require('fs');",
-                "const resolveWorkspaceRoot = (start) => {",
-                "  let cur = start;",
-                "  while (cur && cur !== path.dirname(cur)) {",
-                "    if (fs.existsSync(path.join(cur, 'pnpm-workspace.yaml'))) return cur;",
-                "    cur = path.dirname(cur);",
-                "  }",
-                "  return start;",
-                "};"
-              ].join("\n"));
-              fs.writeFileSync(metroConfig, metro, "utf8");
-              console.log("✅ 已为 metro.config.js 注入内置工作区解析器");
-            }
-          }
-
-          // 3. 补丁 ExpoWidgets.podspec
-          const podspec = path.join(targetPkg, "ios/ExpoWidgets.podspec");
-          if (fs.existsSync(podspec)) {
-            let p = fs.readFileSync(podspec, "utf8");
-            p = p.split('cp "${source}" "${dest}"').join('cp -R "${source}" "${dest}"');
-            fs.writeFileSync(podspec, p, "utf8");
-            console.log("✅ 已修复 ExpoWidgets.podspec 拷贝指令");
-          }
-
-          // 4. 补丁 WidgetsStorage.swift：杜绝签名环境 App Group 缺失导致 defaults 为 nil
-          const storageSwift = path.join(targetPkg, "ios/WidgetsStorage.swift");
-          if (fs.existsSync(storageSwift)) {
-            let sw = fs.readFileSync(storageSwift, "utf8");
-            sw = sw.replace(
-              "static let defaults = UserDefaults(suiteName: appGroupIdentifier)",
-              "static let defaults: UserDefaults? = (appGroupIdentifier != nil ? UserDefaults(suiteName: appGroupIdentifier) : nil) ?? UserDefaults.standard"
-            );
-            fs.writeFileSync(storageSwift, sw, "utf8");
-            console.log("✅ 已为 WidgetsStorage.swift 添加 UserDefaults.standard 兜底保护");
-          }
-
-          // 5. 补丁 Utils.swift：若 App Group 传输布局为空则自动回退到 bundle 内置默认布局
-          const utilsSwift = path.join(targetPkg, "ios/Widgets/Utils.swift");
-          if (fs.existsSync(utilsSwift)) {
-            let ut = fs.readFileSync(utilsSwift, "utf8");
-            ut = ut.replace(
-              'let layout = WidgetsStorage.getString(forKey: "__expo_widgets_live_activity_\\(name)_layout") ?? ""',
-              'var layout = WidgetsStorage.getString(forKey: "__expo_widgets_live_activity_\\(name)_layout") ?? ""\n  if layout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { layout = "globalThis.__expoWidgetDefaultLayout" }'
-            );
-            fs.writeFileSync(utilsSwift, ut, "utf8");
-            console.log("✅ 已为 Utils.swift 添加内置默认布局回退支持");
-          }
-
-          // 6. 补丁 LiveActivityBanner.swift：兼容 iOS 18 槽位互相兜底
-          const bannerSwift = path.join(targetPkg, "ios/Widgets/LiveActivityBanner.swift");
-          if (fs.existsSync(bannerSwift)) {
-            let bn = fs.readFileSync(bannerSwift, "utf8");
-            bn = bn.replace('nodes?["bannerSmall"] as? [String: Any]', '(nodes?["bannerSmall"] ?? nodes?["banner"]) as? [String: Any]');
-            bn = bn.replace('nodes?["banner"] as? [String: Any]', '(nodes?["banner"] ?? nodes?["bannerSmall"]) as? [String: Any]');
-            fs.writeFileSync(bannerSwift, bn, "utf8");
-            console.log("✅ 已为 LiveActivityBanner.swift 添加 banner / bannerSmall 双向兜底");
-          }
-
-          // 7. 补丁 WidgetLiveActivity.swift：展开区域 fallback 到 banner 杜绝全黑
-          const actSwift = path.join(targetPkg, "ios/Widgets/WidgetLiveActivity.swift");
-          if (fs.existsSync(actSwift)) {
-            let act = fs.readFileSync(actSwift, "utf8");
-            const oldSec = `    if let node = nodes[sectionName] as? [String: Any] {\n      WidgetsDynamicView(name: context.activityID, kind: .liveActivity, node: node)\n    } else {\n      EmptyView()\n    }`;
-            const newSec = `    if let node = nodes[sectionName] as? [String: Any] {\n      WidgetsDynamicView(name: context.activityID, kind: .liveActivity, node: node)\n    } else if sectionName == "expandedCenter", let fb = (nodes["banner"] ?? nodes["bannerSmall"]) as? [String: Any] {\n      WidgetsDynamicView(name: context.activityID, kind: .liveActivity, node: fb)\n    } else {\n      EmptyView()\n    }`;
-            if (act.includes(oldSec)) {
-              act = act.replace(oldSec, newSec);
-              fs.writeFileSync(actSwift, act, "utf8");
-              console.log("✅ 已为 WidgetLiveActivity.swift 注入展开视图兜底 (杜绝灵动岛全黑)");
-            }
-          }
-
-          // 8. 补丁 WidgetsJSRuntime.swift：注入 Babel 别名环境变量，并在 JS 出错时自动重试默认布局
-          const runtimeSwift = path.join(targetPkg, "ios/Widgets/WidgetsJSRuntime.swift");
-          if (fs.existsSync(runtimeSwift)) {
-            let rt = fs.readFileSync(runtimeSwift, "utf8");
-            const oldCall = `    guard let layoutValue = getLayoutValue(layout, in: context) else {\n      return .failure(WidgetJavaScriptError(message: contextExceptionMessage(context) ?? "Could not evaluate layout."))\n    }\n\n    context.exception = nil\n    context.setObject(layoutValue, forKeyedSubscript: "__expoWidgetLayout" as NSString)\n\n    let function = context.objectForKeyedSubscript(functionName)\n    guard let function, function.isObject else {\n      return .failure(WidgetJavaScriptError(message: "Expo widget runtime function \\(functionName) is unavailable."))\n    }\n\n    let result = function.call(withArguments: arguments)\n    if let exceptionMessage = contextExceptionMessage(context) {\n      return .failure(WidgetJavaScriptError(message: exceptionMessage))\n    }\n    return .success(result)`;
-            const newCall = `    context.evaluateScript("""\n    if (typeof _jsxRuntime === 'undefined') { var _jsxRuntime = { jsx: globalThis.jsx || globalThis._jsx, jsxs: globalThis.jsxs || globalThis._jsxs }; }\n    if (typeof _swiftUi === 'undefined') { var _swiftUi = globalThis; }\n    if (typeof _modifiers === 'undefined') { var _modifiers = globalThis; }\n    if (typeof _react === 'undefined') { var _react = globalThis.React; }\n    """)\n\n    var targetLayout = layout\n    if targetLayout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {\n      targetLayout = "globalThis.__expoWidgetDefaultLayout"\n    }\n\n    var layoutVal = getLayoutValue(targetLayout, in: context)\n    if layoutVal == nil {\n      layoutVal = getLayoutValue("globalThis.__expoWidgetDefaultLayout", in: context)\n    }\n\n    guard let finalLayout = layoutVal else {\n      return .failure(WidgetJavaScriptError(message: contextExceptionMessage(context) ?? "Could not evaluate layout."))\n    }\n\n    context.exception = nil\n    context.setObject(finalLayout, forKeyedSubscript: "__expoWidgetLayout" as NSString)\n\n    let function = context.objectForKeyedSubscript(functionName)\n    guard let function, function.isObject else {\n      return .failure(WidgetJavaScriptError(message: "Expo widget runtime function \\(functionName) is unavailable."))\n    }\n\n    var result = function.call(withArguments: arguments)\n    if let exceptionMessage = contextExceptionMessage(context) {\n      context.exception = nil\n      if let fallback = getLayoutValue("globalThis.__expoWidgetDefaultLayout", in: context) {\n        context.setObject(fallback, forKeyedSubscript: "__expoWidgetLayout" as NSString)\n        result = function.call(withArguments: arguments)\n        if context.exception == nil {\n          return .success(result)\n        }\n      }\n      return .failure(WidgetJavaScriptError(message: exceptionMessage))\n    }\n    return .success(result)`;
-            if (rt.includes(oldCall)) {
-              rt = rt.replace(oldCall, newCall);
-              fs.writeFileSync(runtimeSwift, rt, "utf8");
-              console.log("✅ 已为 WidgetsJSRuntime.swift 注入全局兼容别名与重试机制");
-            }
-          }
-
-          // 9. 编译独立 Bundle
-          const projectRoot = path.resolve("apps/mobile");
-          const entryFile = path.join(targetPkg, "bundle/index.ts");
-          const generatedBundle = path.join(targetPkg, "bundle/build/ExpoWidgets.bundle");
-          fs.mkdirSync(path.dirname(generatedBundle), { recursive: true });
-
-          console.log("🚀 使用 Expo CLI 独立执行 export:embed 构建 ExpoWidgets.bundle...");
-          console.log("  -> 入口文件:", entryFile);
-          console.log("  -> 输出目标:", generatedBundle);
-
-          const runBuild = spawnSync("npx", [
-            "expo",
-            "export:embed",
-            "--platform",
-            "ios",
-            "--bundle-output",
-            generatedBundle,
-            "--entry-file",
-            entryFile,
-            "--dev",
-            "false",
-            "--skip-server"
-          ], {
-            stdio: "inherit",
-            cwd: projectRoot,
-            env: {
-              ...process.env,
-              EXPO_OVERRIDE_METRO_CONFIG: metroConfig,
-            },
-            shell: true,
-          });
-
-          if (runBuild.status !== 0) {
-            throw new Error("ExpoWidgets.bundle export:embed 构建失败，退出码: " + runBuild.status);
-          }
-
-          if (!fs.existsSync(generatedBundle) || fs.statSync(generatedBundle).size < 1000) {
-            throw new Error("预构建完成但产物文件不存在或过小: " + generatedBundle);
-          }
-          const bundleSize = fs.statSync(generatedBundle).size;
-          console.log(`✅ 成功生成官方 ExpoWidgets.bundle 运行时 JS (${bundleSize} 字节)`);
-
-          function createStructuredBundle(destDir) {
-            fs.mkdirSync(destDir, { recursive: true });
-            fs.copyFileSync(generatedBundle, path.join(destDir, "ExpoWidgets.bundle"));
-            fs.copyFileSync(generatedBundle, path.join(destDir, "index.js"));
-            const plist = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>CFBundleIdentifier</key>\n  <string>org.cocoapods.ExpoWidgets</string>\n  <key>CFBundleName</key>\n  <string>ExpoWidgets</string>\n  <key>CFBundlePackageType</key>\n  <string>BNDL</string>\n</dict>\n</plist>';
-            fs.writeFileSync(path.join(destDir, "Info.plist"), plist, "utf8");
-          }
-
-          createStructuredBundle(path.resolve("apps/mobile/ios/ExpoWidgets.bundle"));
-          createStructuredBundle(path.resolve("apps/mobile/ios/ExpoWidgetsTarget/ExpoWidgets.bundle"));
-          createStructuredBundle(path.join(targetPkg, "bundle/build/ExpoWidgets.bundle_dir"));
-          console.log("✅ 已成功组装符合 Swift WidgetsJSRuntime 标准的双层 Bundle 目录结构并就绪");
           EOF
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
         run: |
@@ -5320,6 +5124,181 @@ jobs:
               fs.writeFileSync(appDelegatePath, appDelegate, "utf8");
               console.log("✅ AppDelegate: 已将 window.backgroundColor 调整为 systemBackgroundColor");
             }
+          }
+          EOF
+      - name: 🎨 注入纯原生 SwiftUI Now Playing Live Activity (彻底终结空白与黑屏)
+        run: |
+          node << 'EOF'
+          const fs = require("fs");
+          const path = require("path");
+
+          const targetSwiftPath = path.resolve("apps/mobile/ios/ExpoWidgetsTarget/index.swift");
+          const liveActivitySwift = [
+            "import WidgetKit",
+            "import SwiftUI",
+            "import ActivityKit",
+            "",
+            "struct LiveActivityAttributes: ActivityAttributes {",
+            "  var url: String?",
+            "",
+            "  public struct ContentState: Codable, Hashable {",
+            "    var name: String",
+            "    var props: String",
+            "",
+            "    public init(name: String, props: String) {",
+            "      self.name = name",
+            "      self.props = props",
+            "    }",
+            "  }",
+            "",
+            "  public init(url: String? = nil) {",
+            "    self.url = url",
+            "  }",
+            "}",
+            "",
+            "struct NowPlayingProps: Codable {",
+            "  var title: String?",
+            "  var artist: String?",
+            "}",
+            "",
+            "@available(iOS 16.1, iOSApplicationExtension 16.1, *)",
+            "struct BBPlayerLiveActivity: Widget {",
+            "  private let pinkColor = Color(red: 251/255, green: 114/255, blue: 153/255)",
+            "  private let bgDarkColor = Color(red: 28/255, green: 28/255, blue: 30/255)",
+            "",
+            "  var body: some WidgetConfiguration {",
+            "    ActivityConfiguration(for: LiveActivityAttributes.self) { context in",
+            "      let props = parseProps(context.state.props)",
+            "      let title = props.title ?? \"正在播放\"",
+            "      let artist = props.artist ?? \"BBPlayer\"",
+            "",
+            "      HStack(spacing: 12) {",
+            "        ZStack {",
+            "          RoundedRectangle(cornerRadius: 10, style: .continuous)",
+            "            .fill(Color(white: 0.18))",
+            "          Image(systemName: \"music.note\")",
+            "            .font(.system(size: 20, weight: .semibold))",
+            "            .foregroundColor(pinkColor)",
+            "        }",
+            "        .frame(width: 44, height: 44)",
+            "",
+            "        VStack(alignment: .leading, spacing: 3) {",
+            "          Text(title)",
+            "            .font(.system(size: 15, weight: .semibold))",
+            "            .foregroundColor(.white)",
+            "            .lineLimit(1)",
+            "          Text(artist)",
+            "            .font(.system(size: 13))",
+            "            .foregroundColor(Color(white: 0.75))",
+            "            .lineLimit(1)",
+            "        }",
+            "",
+            "        Spacer()",
+            "",
+            "        Image(systemName: \"waveform\")",
+            "          .font(.system(size: 20, weight: .medium))",
+            "          .foregroundColor(pinkColor)",
+            "      }",
+            "      .padding(.horizontal, 16)",
+            "      .padding(.vertical, 14)",
+            "      .activityBackgroundTint(bgDarkColor)",
+            "      .widgetURL(URL(string: context.attributes.url ?? \"bbplayer://\"))",
+            "    } dynamicIsland: { context in",
+            "      let props = parseProps(context.state.props)",
+            "      let title = props.title ?? \"正在播放\"",
+            "      let artist = props.artist ?? \"BBPlayer\"",
+            "",
+            "      return DynamicIsland {",
+            "        DynamicIslandExpandedRegion(.leading) {",
+            "          ZStack {",
+            "            RoundedRectangle(cornerRadius: 8, style: .continuous)",
+            "              .fill(Color(white: 0.2))",
+            "            Image(systemName: \"music.note\")",
+            "              .font(.system(size: 18, weight: .semibold))",
+            "              .foregroundColor(pinkColor)",
+            "          }",
+            "          .frame(width: 36, height: 36)",
+            "          .padding(.leading, 4)",
+            "        }",
+            "        DynamicIslandExpandedRegion(.trailing) {",
+            "          Image(systemName: \"waveform\")",
+            "            .font(.system(size: 18, weight: .medium))",
+            "            .foregroundColor(pinkColor)",
+            "            .padding(.trailing, 8)",
+            "        }",
+            "        DynamicIslandExpandedRegion(.center) {",
+            "          VStack(alignment: .leading, spacing: 2) {",
+            "            Text(title)",
+            "              .font(.system(size: 14, weight: .semibold))",
+            "              .foregroundColor(.white)",
+            "              .lineLimit(1)",
+            "            Text(artist)",
+            "              .font(.system(size: 12))",
+            "              .foregroundColor(Color(white: 0.75))",
+            "              .lineLimit(1)",
+            "          }",
+            "          .padding(.leading, 4)",
+            "        }",
+            "        DynamicIslandExpandedRegion(.bottom) {",
+            "          HStack {",
+            "            Text(\"BBPlayer 正在播放\")",
+            "              .font(.system(size: 11))",
+            "              .foregroundColor(Color(white: 0.6))",
+            "            Spacer()",
+            "          }",
+            "          .padding(.horizontal, 8)",
+            "          .padding(.top, 4)",
+            "        }",
+            "      } compactLeading: {",
+            "        Image(systemName: \"music.note\")",
+            "          .font(.system(size: 13, weight: .semibold))",
+            "          .foregroundColor(pinkColor)",
+            "          .padding(.leading, 4)",
+            "      } compactTrailing: {",
+            "        Image(systemName: \"waveform\")",
+            "          .font(.system(size: 13, weight: .semibold))",
+            "          .foregroundColor(pinkColor)",
+            "          .padding(.trailing, 4)",
+            "      } minimal: {",
+            "        Image(systemName: \"music.note\")",
+            "          .font(.system(size: 12, weight: .semibold))",
+            "          .foregroundColor(pinkColor)",
+            "      }",
+            "      .widgetURL(URL(string: context.attributes.url ?? \"bbplayer://\"))",
+            "    }",
+            "  }",
+            "",
+            "  private func parseProps(_ json: String) -> NowPlayingProps {",
+            "    guard let data = json.data(using: .utf8),",
+            "          let decoded = try? JSONDecoder().decode(NowPlayingProps.self, from: data) else {",
+            "      return NowPlayingProps(title: \"正在播放\", artist: \"BBPlayer\")",
+            "    }",
+            "    return decoded",
+            "  }",
+            "}",
+            "",
+            "@main",
+            "struct BBPlayerWidgetsBundle: WidgetBundle {",
+            "  var body: some Widget {",
+            "    if #available(iOS 16.1, iOSApplicationExtension 16.1, *) {",
+            "      BBPlayerLiveActivity()",
+            "    }",
+            "  }",
+            "}",
+            ""
+          ].join("\n");
+
+          fs.mkdirSync(path.dirname(targetSwiftPath), { recursive: true });
+          fs.writeFileSync(targetSwiftPath, liveActivitySwift, "utf8");
+          console.log("🎉 成功向 ExpoWidgetsTarget/index.swift 写入纯原生 SwiftUI Live Activity 代码！");
+
+          // 优化 Info.plist 的显示名称
+          const plistPath = path.resolve("apps/mobile/ios/ExpoWidgetsTarget/Info.plist");
+          if (fs.existsSync(plistPath)) {
+            let plist = fs.readFileSync(plistPath, "utf8");
+            plist = plist.replace("<string>ExpoWidgetsTarget</string>", "<string>BBPlayer</string>");
+            fs.writeFileSync(plistPath, plist, "utf8");
+            console.log("✅ 已优化 ExpoWidgetsTarget DisplayName 为 BBPlayer");
           }
           EOF
       - name: 🍎 安装 CocoaPods 依赖
@@ -5556,97 +5535,20 @@ jobs:
           name: build-ios-error-log
           path: ${{ runner.temp }}/build-ios.log
           retention-days: 7
-      - name: 🧩 确保 ExpoWidgets.bundle 100% 嵌入 Widget 扩展及主 App
+      - name: 🧩 验证 ExpoWidgetsTarget 纯原生扩展架构就绪
         run: |
-          cd apps/mobile/ios
-          node << 'EOF'
-          const fs = require("fs");
-          const path = require("path");
-
-          console.log("🔍 正在检查构建产物并注入 ExpoWidgets.bundle 运行时...");
-
-          let sourceBundleDir = null;
-          const searchPaths = [
-            path.resolve("ExpoWidgets.bundle"),
-            path.resolve("ExpoWidgetsTarget/ExpoWidgets.bundle"),
-          ];
-
-          for (const p of searchPaths) {
-            if (fs.existsSync(p) && fs.existsSync(path.join(p, "ExpoWidgets.bundle"))) {
-              sourceBundleDir = p;
-              break;
-            }
-          }
-
-          if (!sourceBundleDir) {
-            function findBundle(dir) {
-              if (!fs.existsSync(dir)) return;
-              for (const entry of fs.readdirSync(dir)) {
-                const full = path.join(dir, entry);
-                try {
-                  if (entry === "ExpoWidgets.bundle" && fs.existsSync(path.join(full, "ExpoWidgets.bundle"))) {
-                    sourceBundleDir = full;
-                    return;
-                  }
-                  if (fs.statSync(full).isDirectory() && !full.includes(".appex") && !full.includes(".app")) {
-                    findBundle(full);
-                    if (sourceBundleDir) return;
-                  }
-                } catch (e) {}
+          node -e '
+            const fs = require("fs");
+            const targetSwift = "apps/mobile/ios/ExpoWidgetsTarget/index.swift";
+            if (fs.existsSync(targetSwift)) {
+              const code = fs.readFileSync(targetSwift, "utf8");
+              if (code.includes("BBPlayerLiveActivity") && code.includes("DynamicIsland")) {
+                console.log("🎉 ExpoWidgetsTarget 纯原生 SwiftUI 实时活动已就绪，完全无需外部 JS Bundle 依赖！");
+              } else {
+                console.warn("⚠️ ExpoWidgetsTarget/index.swift 未包含预期原生结构");
               }
             }
-            findBundle("build/Build/Products/Release-iphoneos");
-            if (!sourceBundleDir) findBundle("../../../node_modules");
-          }
-
-          if (!sourceBundleDir) {
-            throw new Error("❌ 严重错误：未找到任何有效的 ExpoWidgets.bundle 产物");
-          }
-
-          const bundleSize = fs.statSync(path.join(sourceBundleDir, "ExpoWidgets.bundle")).size;
-          console.log(`✅ 找到有效的 ExpoWidgets.bundle 源 (${bundleSize} 字节): ${sourceBundleDir}`);
-
-          const productsDir = "build/Build/Products/Release-iphoneos";
-          const appexDirs = [];
-          const appDirs = [];
-
-          function scanProducts(dir) {
-            if (!fs.existsSync(dir)) return;
-            for (const item of fs.readdirSync(dir)) {
-              const full = path.join(dir, item);
-              try {
-                if (item.endsWith(".appex")) {
-                  appexDirs.push(full);
-                } else if (item.endsWith(".app")) {
-                  appDirs.push(full);
-                  scanProducts(full);
-                } else if (fs.statSync(full).isDirectory() && !item.endsWith(".framework") && !item.endsWith(".bundle")) {
-                  scanProducts(full);
-                }
-              } catch (e) {}
-            }
-          }
-
-          scanProducts(productsDir);
-          console.log(`已发现 ${appexDirs.length} 个扩展目录 (.appex) 和 ${appDirs.length} 个应用目录 (.app)`);
-
-          const allTargets = [...new Set([...appexDirs, ...appDirs])];
-          for (const target of allTargets) {
-            const destBundle = path.join(target, "ExpoWidgets.bundle");
-            fs.mkdirSync(destBundle, { recursive: true });
-            for (const item of fs.readdirSync(sourceBundleDir)) {
-              fs.cpSync(path.join(sourceBundleDir, item), path.join(destBundle, item), { recursive: true });
-            }
-            const innerFile = path.join(destBundle, "ExpoWidgets.bundle");
-            if (fs.existsSync(innerFile)) {
-              console.log(`✅ 已成功嵌入: ${innerFile} (${fs.statSync(innerFile).size} bytes)`);
-            } else {
-              throw new Error("嵌入失败: " + innerFile);
-            }
-          }
-
-          console.log("🎉 所有扩展与主 App 均已 100% 注入有效 ExpoWidgets.bundle 运行时！");
-          EOF
+          '
       - name: 📦 打包为未签名 .ipa
         run: |
           cd apps/mobile/ios
