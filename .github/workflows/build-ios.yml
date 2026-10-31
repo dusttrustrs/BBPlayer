@@ -1539,6 +1539,69 @@ jobs:
             fs.writeFileSync(searchFavPath, searchFavCode, "utf8");
             console.log("✅ 已修复 search-result/fav/[query].tsx 顶栏返回按钮贴左与标题居中");
           }
+          // 修复 uploader/[mid].tsx UP主主页顶部导航栏左侧返回与昵称居中
+          const uploaderPagePath = "apps/mobile/src/app/playlist/remote/uploader/[mid].tsx";
+          if (fs.existsSync(uploaderPagePath)) {
+            let uploaderCode = fs.readFileSync(uploaderPagePath, "utf8");
+            const oldHeaderRegex = /<Appbar\.Header[\s\S]*?<Appbar\.Content[\s\S]*?<Appbar\.BackAction[\s\S]*?<\/Appbar\.Header>/;
+            if (oldHeaderRegex.test(uploaderCode)) {
+              const newUploaderHeader = [
+                "<Appbar.Header",
+                "    elevated",
+                "    style={{ backgroundColor: 'transparent' }}",
+                ">",
+                "    <Appbar.BackAction",
+                "        onPress={() => {",
+                "            if (selectMode) {",
+                "                exitSelectMode()",
+                "            } else {",
+                "                router.back()",
+                "            }",
+                "        }}",
+                "    />",
+                "    <Appbar.Content",
+                "        title={",
+                "            selectMode",
+                "                ? ('已选择\u2009' + selected.size + '\u2009首')",
+                "                : uploaderUserInfo.name",
+                "        }",
+                "        titleStyle={!selectMode ? { textAlign: 'center' } : undefined}",
+                "        onPress={handleDoubleTap}",
+                "    />",
+                "    {selectMode ? (",
+                "        <>",
+                "            <Appbar.Action",
+                "                icon='playlist-plus'",
+                "                onPress={() => {",
+                "                    const payloads = []",
+                "                    for (const id of selected) {",
+                "                        const track = tracks.find((t) => t.id === id)",
+                "                        if (track) {",
+                "                            payloads.push({",
+                "                                track: track as Track,",
+                "                                artist: track.artist!,",
+                "                            })",
+                "                        }",
+                "                    }",
+                "                    openModal('BatchAddTracksToLocalPlaylist', {",
+                "                        payloads,",
+                "                    })",
+                "                }}",
+                "            />",
+                "        </>",
+                "    ) : (",
+                "        <Appbar.Action",
+                "            icon={startSearch ? 'close' : 'magnify'}",
+                "            onPress={() => setStartSearch((prev) => !prev)}",
+                "        />",
+                "    )}",
+                "</Appbar.Header>"
+              ].join("\n");
+              uploaderCode = uploaderCode.replace(oldHeaderRegex, newUploaderHeader);
+              fs.writeFileSync(uploaderPagePath, uploaderCode, "utf8");
+              console.log("✅ 已修复 uploader/[mid].tsx UP主主页顶部导航栏左侧返回与昵称居中");
+            }
+          }
           // 14. 优化“我的”界面底部可下拉滚动区域：
           // 增加底部内边距（从 86 提升至 180），确保“那月今日”不会被底栏歌曲播放条遮挡。
           const myTabPath = "apps/mobile/src/app/(tabs)/my.tsx";
@@ -3112,7 +3175,7 @@ jobs:
               if (!commentCode.includes("Modal,")) {
                 commentCode = commentCode.replace(
                   "import { Appearance, StyleSheet, TouchableOpacity, View } from 'react-native'",
-                  "import { Appearance, Modal, SafeAreaView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native'"
+                  "import { Appearance, Image as RNImage, Modal, SafeAreaView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native'"
                 );
               }
               if (!commentCode.includes("viewerIndex")) {
@@ -3512,8 +3575,76 @@ jobs:
               ].join("\n");
               commentCode = commentCode.replace("const styles = StyleSheet.create({", "const styles = StyleSheet.create({\n" + viewerStyles);
             }
+            if (!commentCode.includes("const renderReplyMessage =")) {
+              const renderReplyFunc = [
+                "const renderReplyMessage = (",
+                "  message: string,",
+                "  emotes: Record<string, BilibiliCommentEmote> | undefined,",
+                "  color: string,",
+                ") => {",
+                "  const segments = parseMessageSegments(message, emotes)",
+                "  return segments.map((segment) => {",
+                "    if (segment.type === \"text\") {",
+                "      return (",
+                "        <Text",
+                "          key={segment.key}",
+                "          style={{ color, fontSize: 13, lineHeight: 18 }}",
+                "        >",
+                "          {segment.text}",
+                "        </Text>",
+                "      )",
+                "    }",
+                "    const size = segment.emote.meta?.size === 2 ? 32 : 16",
+                "    return (",
+                "      <RNImage",
+                "        key={segment.key}",
+                "        source={{ uri: segment.emote.url }}",
+                "        style={{ width: size, height: size }}",
+                "        resizeMode=\"contain\"",
+                "      />",
+                "    )",
+                "  })",
+                "}",
+                ""
+              ].join("\n");
+              commentCode = commentCode.replace("const CommentMessage = memo(function CommentMessage({", renderReplyFunc + "const CommentMessage = memo(function CommentMessage({");
+            }
+            const repliesRegex = /\{item\.replies\.slice\(0,\s*3\)\.map\(\(reply\)\s*=>\s*\([\s\S]*?<\/View>\s*\)\)\}/;
+            if (repliesRegex.test(commentCode)) {
+              const newRepliesBlock = [
+                "{item.replies.slice(0, 3).map((reply) => (",
+                "\t\t\t\t\t\t\t\t\t<Text",
+                "\t\t\t\t\t\t\t\t\t\tkey={reply.rpid}",
+                "\t\t\t\t\t\t\t\t\t\tstyle={[",
+                "\t\t\t\t\t\t\t\t\t\t\tstyles.replyPreviewText,",
+                "\t\t\t\t\t\t\t\t\t\t\t{ color: theme.colors.onSurfaceVariant },",
+                "\t\t\t\t\t\t\t\t\t\t]}",
+                "\t\t\t\t\t\t\t\t\t>",
+                "\t\t\t\t\t\t\t\t\t\t<Text",
+                "\t\t\t\t\t\t\t\t\t\t\tstyle={{",
+                "\t\t\t\t\t\t\t\t\t\t\t\tfontWeight: 'bold',",
+                "\t\t\t\t\t\t\t\t\t\t\t\tcolor: theme.colors.onSurfaceVariant,",
+                "\t\t\t\t\t\t\t\t\t\t\t\tfontSize: 13,",
+                "\t\t\t\t\t\t\t\t\t\t\t\tlineHeight: 18,",
+                "\t\t\t\t\t\t\t\t\t\t\t}}",
+                "\t\t\t\t\t\t\t\t\t\t>",
+                "\t\t\t\t\t\t\t\t\t\t\t{reply.member.uname}:{' '}\n\t\t\t\t\t\t\t\t\t\t</Text>",
+                "\t\t\t\t\t\t\t\t\t\t{renderReplyMessage(",
+                "\t\t\t\t\t\t\t\t\t\t\treply.content.message,",
+                "\t\t\t\t\t\t\t\t\t\t\treply.content.emote,",
+                "\t\t\t\t\t\t\t\t\t\t\ttheme.colors.onSurfaceVariant,",
+                "\t\t\t\t\t\t\t\t\t\t)}",
+                "\t\t\t\t\t\t\t\t\t</Text>",
+                "\t\t\t\t\t\t\t\t))}"
+              ].join("\n");
+              commentCode = commentCode.replace(repliesRegex, newRepliesBlock);
+              commentCode = commentCode.replace(
+                /replyPreviewText:\s*\{[\s\S]*?fontSize:\s*13,[\s\S]*?marginBottom:\s*4,?\s*\}/,
+                "replyPreviewText: {\n\t\tfontSize: 13,\n\t\tlineHeight: 18,\n\t\tmarginBottom: 4,\n\t}"
+              );
+            }
             fs.writeFileSync(commentItemPath, commentCode, "utf8");
-            console.log("✅ 已在 CommentItem.tsx 中实现评论区图片手势切换、双指缩放与保存图片");
+            console.log("✅ 已在 CommentItem.tsx 中实现评论区图片手势切换、双指缩放与保存图片并修复评论预览字号与对齐");
           }
           // 34. 支持仅下载音频选项（去除画面以大幅缩减体积）并联动 ExpoOrpheusModule / BilibiliApi：
           const expoOrpheusSwiftPath = "packages/orpheus/ios/ExpoOrpheusModule.swift";
