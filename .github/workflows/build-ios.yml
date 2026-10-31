@@ -644,6 +644,27 @@ jobs:
               console.log("✅ 已修复 AnimatedModalOverlay.tsx 遮罩层点击穿透与事件隔离并清理未使用的 AnimatedPressable");
             }
           }
+          // (b-2) 修补 react-native-paper 的 SurfaceIOS：将 minWidth/maxWidth/minHeight/maxHeight 加入 outerLayerStyleProperties，杜绝双层尺寸撕裂
+          try {
+            const paperPkg = require.resolve("react-native-paper/package.json", { paths: ["apps/mobile"] });
+            const paperDir = path.dirname(paperPkg);
+            for (const sub of ["src/components/Surface.tsx", "lib/module/components/Surface.js", "lib/commonjs/components/Surface.js"]) {
+              const full = path.join(paperDir, sub);
+              if (fs.existsSync(full)) {
+                let code = fs.readFileSync(full, "utf8");
+                if (code.includes("outerLayerStyleProperties") && !code.includes("maxWidth")) {
+                  code = code.replace(
+                    /outerLayerStyleProperties\s*=\s*\[([\s\S]*?)\];/,
+                    (match, inner) => `outerLayerStyleProperties = [${inner.trim()}, 'minWidth', 'maxWidth', 'minHeight', 'maxHeight'];`
+                  );
+                  fs.writeFileSync(full, code, "utf8");
+                  console.log(`✅ 已修补 react-native-paper/${sub} 支持 maxWidth/minWidth 样式拆分`);
+                }
+              }
+            }
+          } catch (e) {
+            console.log("react-native-paper patch warning:", e.message);
+          }
           // (c) Button.tsx 与 IconButton.tsx 改用 React Native 原生 Pressable，消除 RNGH Touchable 在 iOS Modal 页面中的失效问题
           for (const btnRelative of ["apps/mobile/src/components/common/Button.tsx", "apps/mobile/src/components/common/IconButton.tsx"]) {
             if (fs.existsSync(btnRelative)) {
@@ -680,7 +701,20 @@ jobs:
                 ].join("\n");
                 qrCode = qrCode.replace(qrPattern, qrReplacement);
                 fs.writeFileSync(qrLoginPath, qrCode, "utf8");
-                console.log("✅ 已优化 qrcode-login.tsx 为优先唤起系统/B站客户端授权");
+                qrCode = qrCode.replace(
+                /brandButton:\s*\{[\s\S]*?\},/g,
+                "brandButton: {\n\t\twidth: '100%',\n\t\tmaxWidth: 280,\n\t\talignSelf: 'center',\n\t},"
+              );
+              qrCode = qrCode.replace(
+                /brandButtonContent:\s*\{[\s\S]*?\},/g,
+                "brandButtonContent: {\n\t\theight: 48,\n\t\twidth: '100%',\n\t},"
+              );
+              qrCode = qrCode.replace(
+                /brandButtonLabel:\s*\{[\s\S]*?\},/g,
+                "brandButtonLabel: {\n\t\tcolor: '#fff',\n\t\tfontWeight: 'bold',\n\t\ttextAlign: 'center',\n\t},"
+              );
+              fs.writeFileSync(qrLoginPath, qrCode, "utf8");
+              console.log("✅ 已优化 qrcode-login.tsx 为优先唤起系统/B站客户端授权及居中规范");
               }
             }
           }
@@ -1602,6 +1636,192 @@ jobs:
               console.log("✅ 已修复 uploader/[mid].tsx UP主主页顶部导航栏左侧返回与昵称居中");
             }
           }
+          // 修复 multipage/[bvid].tsx 歌曲详情/分P列表顶栏返回贴左与标题居中
+          const multipagePagePath = "apps/mobile/src/app/playlist/remote/multipage/[bvid].tsx";
+          if (fs.existsSync(multipagePagePath)) {
+            let mpCode = fs.readFileSync(multipagePagePath, "utf8");
+            mpCode = mpCode.replace(
+              "const { selected, selectMode, toggle, enterSelectMode, setSelected } =",
+              "const { selected, selectMode, toggle, enterSelectMode, exitSelectMode, setSelected } ="
+            );
+            const oldMpHeaderRegex = /<Appbar\.Header[\s\S]*?<Appbar\.Content[\s\S]*?<\/Appbar\.Header>/;
+            if (oldMpHeaderRegex.test(mpCode)) {
+              const newMpHeader = [
+                "<Appbar.Header",
+                "    elevated",
+                "    style={{ backgroundColor: 'transparent' }}",
+                ">",
+                "    <Appbar.BackAction",
+                "        onPress={() => {",
+                "            if (selectMode) {",
+                "                exitSelectMode()",
+                "            } else {",
+                "                router.back()",
+                "            }",
+                "        }}",
+                "    />",
+                "    <Appbar.Content",
+                "        title={",
+                "            selectMode",
+                "                ? ('已选择\u2009' + selected.size + '\u2009首')",
+                "                : videoData.title",
+                "        }",
+                "        titleStyle={!selectMode ? { textAlign: 'center' } : undefined}",
+                "        onPress={handleDoubleTap}",
+                "    />",
+                "    {selectMode ? (",
+                "        <>",
+                "            <Appbar.Action",
+                "                icon='select-all'",
+                "                onPress={() => setSelected(new Set(tracksData.map((t) => t.id)))}",
+                "            />",
+                "            <Appbar.Action",
+                "                icon='select-compare'",
+                "                onPress={() =>",
+                "                    setSelected(",
+                "                        new Set(",
+                "                            tracksData",
+                "                                .filter((t) => !selected.has(t.id))",
+                "                                .map((t) => t.id),",
+                "                        ),",
+                "                    )",
+                "                }",
+                "            />",
+                "            <Appbar.Action",
+                "                icon='playlist-plus'",
+                "                onPress={() => {",
+                "                    const trackMap = new Map(tracksData.map((t) => [t.id, t]))",
+                "                    const payloads = []",
+                "                    for (const id of selected) {",
+                "                        const track = trackMap.get(id)",
+                "                        if (track) {",
+                "                            payloads.push({",
+                "                                track: track as Track,",
+                "                                artist: track.artist!,",
+                "                            })",
+                "                        }",
+                "                    }",
+                "                    openModal('BatchAddTracksToLocalPlaylist', {",
+                "                        payloads,",
+                "                    })",
+                "                }}",
+                "            />",
+                "        </>",
+                "    ) : (",
+                "        <Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />",
+                "    )}",
+                "</Appbar.Header>"
+              ].join("\n");
+              mpCode = mpCode.replace(oldMpHeaderRegex, newMpHeader);
+              fs.writeFileSync(multipagePagePath, mpCode, "utf8");
+              console.log("✅ 已修复 multipage/[bvid].tsx 歌曲详情顶栏返回按钮贴左与标题居中");
+            }
+          }
+
+          // 修复 series/[id].tsx 视频合集列表顶栏返回贴左与标题居中
+          const seriesPagePath = "apps/mobile/src/app/playlist/remote/series/[id].tsx";
+          if (fs.existsSync(seriesPagePath)) {
+            let seriesCode = fs.readFileSync(seriesPagePath, "utf8");
+            seriesCode = seriesCode.replace(
+              "const { selected, selectMode, toggle, enterSelectMode, setSelected } =",
+              "const { selected, selectMode, toggle, enterSelectMode, exitSelectMode, setSelected } ="
+            );
+            const oldSeriesHeaderRegex = /<Appbar\.Header[\s\S]*?<Appbar\.Content[\s\S]*?<\/Appbar\.Header>/;
+            if (oldSeriesHeaderRegex.test(seriesCode)) {
+              const newSeriesHeader = [
+                "<Appbar.Header",
+                "    elevated",
+                "    style={{ backgroundColor: 'transparent' }}",
+                ">",
+                "    <Appbar.BackAction",
+                "        onPress={() => {",
+                "            if (selectMode) {",
+                "                exitSelectMode()",
+                "            } else {",
+                "                router.back()",
+                "            }",
+                "        }}",
+                "    />",
+                "    <Appbar.Content",
+                "        title={",
+                "            selectMode",
+                "                ? ('已选择\u2009' + selected.size + '\u2009首')",
+                "                : seriesMetadata.name",
+                "        }",
+                "        titleStyle={!selectMode ? { textAlign: 'center' } : undefined}",
+                "        onPress={handleDoubleTap}",
+                "    />",
+                "    {selectMode ? (",
+                "        <>",
+                "            <Appbar.Action",
+                "                icon='select-all'",
+                "                onPress={() => setSelected(new Set(tracks.map((t) => t.id)))}",
+                "            />",
+                "            <Appbar.Action",
+                "                icon='select-compare'",
+                "                onPress={() =>",
+                "                    setSelected(",
+                "                        new Set(",
+                "                            tracks.filter((t) => !selected.has(t.id)).map((t) => t.id),",
+                "                        ),",
+                "                    )",
+                "                }",
+                "            />",
+                "            <Appbar.Action",
+                "                icon='playlist-plus'",
+                "                onPress={() => {",
+                "                    const payloads = []",
+                "                    for (const selectedId of selected) {",
+                "                        const track = tracks.find((t) => t.id === selectedId)",
+                "                        if (track) {",
+                "                            payloads.push({",
+                "                                track: track as Track,",
+                "                                artist: track.artist!,",
+                "                            })",
+                "                        }",
+                "                    }",
+                "                    openModal('BatchAddTracksToLocalPlaylist', {",
+                "                        payloads,",
+                "                    })",
+                "                }}",
+                "            />",
+                "        </>",
+                "    ) : (",
+                "        <Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />",
+                "    )}",
+                "</Appbar.Header>"
+              ].join("\n");
+              seriesCode = seriesCode.replace(oldSeriesHeaderRegex, newSeriesHeader);
+              fs.writeFileSync(seriesPagePath, seriesCode, "utf8");
+              console.log("✅ 已修复 series/[id].tsx 视频合集顶栏返回按钮贴左与标题居中");
+            }
+          }
+
+          // 修复 share/playlist.tsx 分享歌单列表顶栏返回贴左与标题居中
+          const sharePlaylistPath = "apps/mobile/src/app/share/playlist.tsx";
+          if (fs.existsSync(sharePlaylistPath)) {
+            let shareCode = fs.readFileSync(sharePlaylistPath, "utf8");
+            const oldShareHeaderRegex = /<Appbar\.Header[\s\S]*?<Appbar\.Content[\s\S]*?<Appbar\.BackAction[\s\S]*?<\/Appbar\.Header>/;
+            if (oldShareHeaderRegex.test(shareCode)) {
+              const newShareHeader = [
+                "<Appbar.Header",
+                "    elevated",
+                "    style={{ backgroundColor: 'transparent' }}",
+                ">",
+                "    <Appbar.BackAction onPress={() => router.back()} />",
+                "    <Appbar.Content",
+                "        title={data.playlist.title}",
+                "        titleStyle={{ textAlign: 'center' }}",
+                "        onPress={handleDoubleTap}",
+                "    />",
+                "    <Appbar.Action icon={() => null} disabled style={{ opacity: 0 }} />",
+                "</Appbar.Header>"
+              ].join("\n");
+              shareCode = shareCode.replace(oldShareHeaderRegex, newShareHeader);
+              fs.writeFileSync(sharePlaylistPath, shareCode, "utf8");
+              console.log("✅ 已修复 share/playlist.tsx 分享歌单顶栏返回按钮贴左与标题居中");
+            }
+          }
           // 14. 优化“我的”界面底部可下拉滚动区域：
           // 增加底部内边距（从 86 提升至 180），确保“那月今日”不会被底栏歌曲播放条遮挡。
           const myTabPath = "apps/mobile/src/app/(tabs)/my.tsx";
@@ -2113,6 +2333,114 @@ jobs:
               fs.writeFileSync(btnPath, btnCode, "utf8");
               console.log("✅ 已为 Button.tsx 选项与按钮添加点击光晕扩散动效");
             }
+            // 增强 Button.tsx 按钮内容居中与图标对称边距
+            let btnCenterCode = fs.readFileSync(btnPath, "utf8");
+            if (!btnCenterCode.includes("hasAddons")) {
+              btnCenterCode = btnCenterCode.replace(
+                "const hasElevation = isMode('elevated') || isMode('contained')",
+                "const hasElevation = isMode('elevated') || isMode('contained')\n\t\tconst hasAddons = Boolean(icon || loading)\n\t\tconst isReverse = StyleSheet.flatten(contentStyle)?.flexDirection === 'row-reverse'"
+              );
+              btnCenterCode = btnCenterCode.replace(
+                "<View style={[styles.content]}>",
+                "<View style={[styles.content, compact && styles.compactContent]}>"
+              );
+              btnCenterCode = btnCenterCode.replace(
+                /isMode\('text'\)\s*\?\s*icon \|\| loading[\s\S]*?:\s*styles\.md3Label,/,
+                `isMode('text')
+                    ? hasAddons
+                      ? styles.md3LabelTextAddons
+                      : styles.md3LabelText
+                    : hasAddons
+                      ? styles.md3LabelAddons
+                      : styles.md3Label,`
+              );
+              const newBtnStyles = `const styles = StyleSheet.create({
+\tsurface: {
+\t\tminWidth: 64,
+\t\tborderStyle: 'solid',
+\t},
+\tbutton: {
+\t\tminWidth: 64,
+\t\tborderStyle: 'solid',
+\t\toverflow: 'hidden',
+\t\tjustifyContent: 'center',
+\t\talignItems: 'center',
+\t},
+\tcompact: {
+\t\tminWidth: 'auto',
+\t},
+\tcontent: {
+\t\tflexDirection: 'row',
+\t\talignItems: 'center',
+\t\tjustifyContent: 'center',
+\t\twidth: '100%',
+\t\theight: '100%',
+\t\tpaddingHorizontal: 16,
+\t},
+\tcompactContent: {
+\t\tpaddingHorizontal: 8,
+\t},
+\ticon: {
+\t\tmarginRight: 8,
+\t},
+\ticonReverse: {
+\t\tmarginLeft: 8,
+\t},
+\tmd3Icon: {
+\t\tmarginRight: 8,
+\t},
+\tmd3IconCompact: {
+\t\tmarginRight: 6,
+\t},
+\tmd3IconReverse: {
+\t\tmarginLeft: 8,
+\t},
+\tmd3IconReverseCompact: {
+\t\tmarginLeft: 6,
+\t},
+\tmd3IconTextMode: {
+\t\tmarginRight: 6,
+\t},
+\tmd3IconTextModeCompact: {
+\t\tmarginRight: 4,
+\t},
+\tmd3IconReverseTextMode: {
+\t\tmarginLeft: 6,
+\t},
+\tmd3IconReverseTextModeCompact: {
+\t\tmarginLeft: 4,
+\t},
+\tlabel: {
+\t\ttextAlign: 'center',
+\t\tletterSpacing: 0.1,
+\t\tlineHeight: 20,
+\t\tmarginVertical: 9,
+\t\tmarginHorizontal: 0,
+\t},
+\tcompactLabel: {
+\t\tmarginHorizontal: 0,
+\t},
+\tmd3Label: {
+\t\tmarginVertical: 10,
+\t\tmarginHorizontal: 8,
+\t},
+\tmd3LabelAddons: {
+\t\tmarginVertical: 10,
+\t\tmarginHorizontal: 0,
+\t},
+\tmd3LabelText: {
+\t\tmarginHorizontal: 6,
+\t},
+\tmd3LabelTextAddons: {
+\t\tmarginHorizontal: 0,
+\t},
+})
+
+export default Button`;
+              btnCenterCode = btnCenterCode.replace(/const styles = StyleSheet\.create\(\{[\s\S]*?\}\)\s*export default Button/, newBtnStyles);
+              fs.writeFileSync(btnPath, btnCenterCode, "utf8");
+              console.log("✅ 已为 Button.tsx 增强绝对居中与对称布局");
+            }
           }
           // 18. 在「我的-设置-播放」中添加「点击单曲时直接进入播放界面」与「系统控制中心与灵动岛联动（独占播放）」选项（默认均开启）：
           const appStoreTypesPath = "apps/mobile/src/types/core/appStore.ts";
@@ -2121,7 +2449,7 @@ jobs:
             if (!appStoreTypes.includes("openPlayerOnTrackPress")) {
               appStoreTypes = appStoreTypes.replace(
                 "hideStarPrompt: boolean",
-                "hideStarPrompt: boolean\n\topenPlayerOnTrackPress?: boolean\n\tenableSystemMediaControl?: boolean\n\tdownloadAudioOnly?: boolean\n\tthemeColor?: string"
+                "hideStarPrompt: boolean\n\topenPlayerOnTrackPress?: boolean\n\tenableSystemMediaControl?: boolean\n\tdownloadAudioOnly?: boolean\n\tthemeColor?: string\n\tclearQueueKeepPlaying?: boolean\n\trotatePlayerCover?: boolean"
               );
               fs.writeFileSync(appStoreTypesPath, appStoreTypes, "utf8");
               console.log("✅ 已在 appStore.ts 中声明 openPlayerOnTrackPress 与 enableSystemMediaControl 配置项");
@@ -2133,7 +2461,7 @@ jobs:
             if (!useAppStoreCode.includes("openPlayerOnTrackPress:")) {
               useAppStoreCode = useAppStoreCode.replace(
                 "hideStarPrompt: false,",
-                "hideStarPrompt: false,\n\t\t\t\t\topenPlayerOnTrackPress: true,\n\t\t\t\t\tenableSystemMediaControl: true,\n\t\t\t\t\tdownloadAudioOnly: true,\n\t\t\t\t\tthemeColor: undefined,"
+                "hideStarPrompt: false,\n\t\t\t\t\topenPlayerOnTrackPress: true,\n\t\t\t\t\tenableSystemMediaControl: true,\n\t\t\t\t\tdownloadAudioOnly: true,\n\t\t\t\t\tthemeColor: undefined,\n\t\t\t\t\tclearQueueKeepPlaying: false,\n\t\t\t\t\trotatePlayerCover: false,"
               );
             }
             if (!useAppStoreCode.includes("updates.enableSystemMediaControl !== undefined")) {
@@ -2174,7 +2502,7 @@ jobs:
             if (!playbackCode.includes("const openPlayerOnTrackPress =")) {
               playbackCode = playbackCode.replace(
                 "const setSettings = useAppStore((state) => state.setSettings)",
-                "const setSettings = useAppStore((state) => state.setSettings)\n\tconst openPlayerOnTrackPress = useAppStore((state) => state.settings.openPlayerOnTrackPress ?? true)"
+                "const setSettings = useAppStore((state) => state.setSettings)\n\tconst openPlayerOnTrackPress = useAppStore((state) => state.settings.openPlayerOnTrackPress ?? true)\n\tconst clearQueueKeepPlaying = useAppStore((state) => state.settings.clearQueueKeepPlaying ?? false)\n\tconst rotatePlayerCover = useAppStore((state) => state.settings.rotatePlayerCover ?? false)"
               );
             }
             const regexRow = /<View style=\{styles\.settingRow\}>[ \t\r\n]*<Text>允许与其他软件同时播放<\/Text>[\s\S]*?<\/View>/;
@@ -2229,12 +2557,190 @@ jobs:
                 "              void Orpheus.setAllowSimultaneousPlayback(value)",
                 "            }}",
                 "          />",
+                "        </View>",
+                "        <View style={styles.settingRow}>",
+                "          <View style={{ flexShrink: 1, paddingRight: 10 }}>",
+                "            <Text>旋转歌曲封面</Text>",
+                "            <Text variant='bodySmall'>",
+                "              开启后，播放界面的圆形歌曲封面将随音乐播放匀速顺时针旋转；关闭则保持静止。",
+                "            </Text>",
+                "          </View>",
+                "          <UniversalSwitch",
+                "            value={rotatePlayerCover}",
+                "            onValueChange={(value) => {",
+                "              setSettings({ rotatePlayerCover: value })",
+                "            }}",
+                "          />",
+                "        </View>",
+                "",
+                "        <SettingsSectionTitle title='播放列表' />",
+                "        <View style={styles.settingRow}>",
+                "          <View style={{ flexShrink: 1, paddingRight: 10 }}>",
+                "            <Text>清空时保留当前播放</Text>",
+                "            <Text variant='bodySmall'>",
+                "              开启后清空播放列表不会中断正在播放的歌曲。",
+                "            </Text>",
+                "          </View>",
+                "          <UniversalSwitch",
+                "            value={clearQueueKeepPlaying}",
+                "            onValueChange={(value) => {",
+                "              setSettings({ clearQueueKeepPlaying: value })",
+                "            }}",
+                "          />",
                 "        </View>"
               ].join("\n");
               playbackCode = playbackCode.replace(regexRow, newRows);
               fs.writeFileSync(playbackSettingsPath, playbackCode, "utf8");
+
               console.log("✅ 已在 settings/playback.tsx 中添加控制中心联动与单曲点击直接播放设置项");
             }
+          }
+          // 22. 为播放界面圆形歌曲封面添加匀速顺时针旋转动画
+          const trackInfoCompPath = "apps/mobile/src/features/player/components/main/PlayerTrackInfo.tsx";
+          if (fs.existsSync(trackInfoCompPath)) {
+            let trackInfoCode = fs.readFileSync(trackInfoCompPath, "utf8");
+            if (!trackInfoCode.includes("rotatePlayerCover")) {
+              trackInfoCode = trackInfoCode.replace(
+                "import { Text, TouchableRipple, useTheme } from 'react-native-paper'",
+                "import Animated, { useAnimatedStyle, useFrameCallback, useSharedValue } from 'react-native-reanimated'\nimport { Text, TouchableRipple, useTheme } from 'react-native-paper'"
+              );
+              trackInfoCode = trackInfoCode.replace(
+                "import useActiveSkin from '@/hooks/theme/useActiveSkin'",
+                "import useActiveSkin from '@/hooks/theme/useActiveSkin'\nimport useAppStore from '@/hooks/stores/useAppStore'"
+              );
+              const hookTarget = "const enableSpectrumVisualizer = useSpectrumVisualizerEnabled()";
+              const hookReplacement = [
+                "const enableSpectrumVisualizer = useSpectrumVisualizerEnabled()",
+                "\tconst rotatePlayerCover = useAppStore(",
+                "\t\t(state) => state.settings.rotatePlayerCover ?? false,",
+                "\t)",
+                "",
+                "\tconst rotation = useSharedValue(0)",
+                "",
+                "\tconst frameCallback = useFrameCallback((frameInfo) => {",
+                "\t\t'worklet'",
+                "\t\tconst delta = frameInfo.timeSincePreviousFrame ?? 16.6",
+                "\t\trotation.value = (rotation.value + (360 / 20000) * delta) % 360",
+                "\t}, false)",
+                "",
+                "\tconst animatedRotateStyle = useAnimatedStyle(() => ({",
+                "\t\ttransform: [{ rotate: `${rotation.value}deg` }],",
+                "\t}))",
+                "",
+                "\tuseEffect(() => {",
+                "\t\tconst shouldAnimate = Boolean(rotatePlayerCover && isPlaying)",
+                "\t\tframeCallback.setActive(shouldAnimate)",
+                "\t\tif (!rotatePlayerCover) {",
+                "\t\trotation.value = 0",
+                "\t\t}",
+                "\t}, [rotatePlayerCover, isPlaying, frameCallback])"
+              ].join("\n");
+              trackInfoCode = trackInfoCode.replace(hookTarget, hookReplacement);
+
+              trackInfoCode = trackInfoCode.replace(
+                /<TouchableOpacity[\s\S]*?<SquircleView/,
+                `<TouchableOpacity
+								activeOpacity={0.8}
+								onPress={podcast ? undefined : onPressCover}
+								disabled={podcast}
+								style={{ width: coverSize, height: coverSize }}
+								testID='player-cover'
+							>
+								<Animated.View style={[{ width: coverSize, height: coverSize }, !podcast && animatedRotateStyle]}>
+									<SquircleView`
+              );
+
+              trackInfoCode = trackInfoCode.replace(
+                /<\/SquircleView>(\r?\n\s*)<\/TouchableOpacity>/,
+                '</SquircleView>$1</Animated.View>$1</TouchableOpacity>'
+              );
+
+              fs.writeFileSync(trackInfoCompPath, trackInfoCode, "utf8");
+              console.log("✅ 已在 PlayerTrackInfo.tsx 中注入圆形歌曲封面匀速旋转动画与控制逻辑");
+            }
+          }
+                    const universalCheckboxPath = "apps/mobile/src/components/common/UniversalCheckbox.tsx";
+          if (fs.existsSync(universalCheckboxPath)) {
+            const cleanCheckboxCode = [
+              "import { memo } from 'react'",
+              "import { Pressable, StyleSheet, View } from 'react-native'",
+              "import { Icon as PaperIcon, useTheme } from 'react-native-paper'",
+              "",
+              "export type UniversalCheckboxProps = {",
+              "	status: 'checked' | 'unchecked' | 'indeterminate'",
+              "	onPress?: () => void",
+              "	disabled?: boolean",
+              "	testID?: string",
+              "}",
+              "",
+              "const UniversalCheckbox = memo(function UniversalCheckbox({",
+              "	disabled,",
+              "	onPress,",
+              "	status,",
+              "	testID,",
+              "}: UniversalCheckboxProps) {",
+              "	const theme = useTheme()",
+              "	const isChecked = status === 'checked'",
+              "",
+              "	const content = (",
+              "		<View",
+              "			testID={testID}",
+              "			style={[",
+              "				styles.box,",
+              "				{",
+              "					borderColor: isChecked ? theme.colors.primary : theme.colors.outline,",
+              "					backgroundColor: isChecked ? theme.colors.primary : 'transparent',",
+              "				},",
+              "			]}",
+              "		>",
+              "			{isChecked && (",
+              "				<PaperIcon",
+              "					source='check'",
+              "					size={14}",
+              "					color={theme.colors.onPrimary}",
+              "				/>",
+              "			)}",
+              "		</View>",
+              "	)",
+              "",
+              "	if (onPress && !disabled) {",
+              "		return (",
+              "			<Pressable",
+              "				onPress={onPress}",
+              "				hitSlop={8}",
+              "				style={styles.container}",
+              "			>",
+              "				{content}",
+              "			</Pressable>",
+              "		)",
+              "	}",
+              "",
+              "	return (",
+              "		<View style={styles.container} pointerEvents='none'>",
+              "			{content}",
+              "		</View>",
+              "	)",
+              "})",
+              "",
+              "const styles = StyleSheet.create({",
+              "	container: {",
+              "		alignItems: 'center',",
+              "		justifyContent: 'center',",
+              "	},",
+              "	box: {",
+              "		width: 20,",
+              "		height: 20,",
+              "		borderRadius: 10,",
+              "		borderWidth: 2,",
+              "		alignItems: 'center',",
+              "		justifyContent: 'center',",
+              "	},",
+              "})",
+              "",
+              "export default UniversalCheckbox"
+            ].join("\n");
+            fs.writeFileSync(universalCheckboxPath, cleanCheckboxCode, "utf8");
+            console.log("✅ 已优化 UniversalCheckbox.tsx 为精美圆形图标，避免遮挡歌曲封面");
           }
           const storageSettingsPath = "apps/mobile/src/app/settings/storage.tsx";
           if (fs.existsSync(storageSettingsPath)) {
@@ -2460,7 +2966,7 @@ jobs:
               console.log("✅ 已在 LocalTrackList.tsx 中实现向左滑动移除歌曲选项");
             }
           }
-          // 20. 修复播放队列 (PlayerQueueModal.tsx) 优化左滑删除、移除叉号图标并在删除按钮内显示垃圾桶图标：
+          // 20. 修复播放队列 (PlayerQueueModal.tsx) 支持右滑触发多选、批量删除垃圾桶图标、清空播放列表保留正在播放歌曲等：
           const queueModalPath = "apps/mobile/src/components/modals/PlayerQueueModal.tsx";
           if (fs.existsSync(queueModalPath)) {
             let queueModal = fs.readFileSync(queueModalPath, "utf8");
@@ -2470,6 +2976,19 @@ jobs:
             if (!queueModal.includes("Icon as PaperIcon")) {
               queueModal = queueModal.replace("import { Text, useTheme } from 'react-native-paper'", "import { Icon as PaperIcon, Text, useTheme } from 'react-native-paper'");
             }
+            if (!queueModal.includes("UniversalCheckbox")) {
+              queueModal = queueModal.replace(
+                "import IconButton from '@/components/common/IconButton'",
+                "import IconButton from '@/components/common/IconButton'\nimport UniversalCheckbox from '@/components/common/UniversalCheckbox'"
+              );
+            }
+            if (!queueModal.includes("useAppStore")) {
+              queueModal = queueModal.replace(
+                "import { useModalStore } from '@/hooks/stores/useModalStore'",
+                "import useAppStore from '@/hooks/stores/useAppStore'\nimport { useModalStore } from '@/hooks/stores/useModalStore'"
+              );
+            }
+
             const oldTrackItemRegex = /const TrackItem = memo\([\s\S]*?TrackItem\.displayName = 'TrackItem'/;
             const newTrackItem = [
               "const TrackItem = memo(",
@@ -2482,6 +3001,10 @@ jobs:
               "    onDragEnd,",
               "    isDragging,",
               "    index,",
+              "    selectMode,",
+              "    isSelected,",
+              "    onToggleSelect,",
+              "    onTriggerSelect,",
               "  }: {",
               "    track: OrpheusTrack",
               "    onSwitchTrack: (index: number) => void",
@@ -2491,11 +3014,18 @@ jobs:
               "    onDragEnd: () => void",
               "    isDragging: boolean",
               "    index: number",
+              "    selectMode: boolean",
+              "    isSelected: boolean",
+              "    onToggleSelect: (index: number) => void",
+              "    onTriggerSelect: (index: number) => void",
               "  }) => {",
               "    const colors = useTheme().colors",
               "    const isCurrentTrack = useIsCurrentTrack(track.id)",
+              "    const swipeableRef = useRef<SwipeableMethods>(null)",
+              "",
               "    const dragPan = usePanGesture({",
               "      activateAfterLongPress: 300,",
+              "      enabled: !selectMode,",
               "      runOnJS: true,",
               "      onActivate: (event) => onDragStart(index, event.translationY, event.y),",
               "      onUpdate: (event) => onDragUpdate(event.translationY),",
@@ -2536,18 +3066,64 @@ jobs:
               "      </View>",
               "    )",
               "",
+              "    const renderLeftActions = (",
+              "      _progress: any,",
+              "      _translation: any,",
+              "      swipeableMethods: SwipeableMethods,",
+              "    ) => (",
+              "      <View",
+              "        style={{",
+              "          width: 80,",
+              "          height: ROW_HEIGHT,",
+              "          justifyContent: 'center',",
+              "          alignItems: 'center',",
+              "        }}",
+              "      >",
+              "        <Pressable",
+              "          style={{",
+              "            backgroundColor: colors.primary,",
+              "            width: '100%',",
+              "            height: '100%',",
+              "            flexDirection: 'row',",
+              "            justifyContent: 'center',",
+              "            alignItems: 'center',",
+              "            gap: 4,",
+              "          }}",
+              "          onPress={() => {",
+              "            swipeableMethods.close()",
+              "            onTriggerSelect(index)",
+              "          }}",
+              "        >",
+              "          <PaperIcon source='check-circle-outline' size={18} color={colors.onPrimary} />",
+              "          <Text style={{ color: colors.onPrimary, fontWeight: 'bold' }}>多选</Text>",
+              "        </Pressable>",
+              "      </View>",
+              "    )",
+              "",
               "    return (",
               "      <ReanimatedSwipeable",
+              "        ref={swipeableRef}",
               "        friction={2}",
               "        overshootRight={false}",
+              "        overshootLeft={false}",
               "        rightThreshold={40}",
-              "        renderRightActions={renderRightActions}",
+              "        leftThreshold={40}",
+              "        renderRightActions={selectMode ? undefined : renderRightActions}",
+              "        renderLeftActions={selectMode ? undefined : renderLeftActions}",
+              "        onSwipeableOpen={(direction) => {",
+              "          if (direction === 'left') {",
+              "            swipeableRef.current?.close()",
+              "            onTriggerSelect(index)",
+              "          }",
+              "        }}",
               "      >",
               "        <GestureDetector gesture={dragPan}>",
               "          <View",
               "            collapsable={false}",
               "            style={{",
-              "              backgroundColor: isCurrentTrack",
+              "              backgroundColor: isSelected",
+              "                ? (colors.primaryContainer ?? colors.elevation.level3)",
+              "                : isCurrentTrack",
               "                ? colors.elevation.level5",
               "                : colors.elevation.level1,",
               "              overflow: 'hidden',",
@@ -2560,7 +3136,13 @@ jobs:
               "            <Touchable",
               "              style={{ flex: 1, height: ROW_HEIGHT }}",
               "              androidRipple={{}}",
-              "              onPress={() => onSwitchTrack(index)}",
+              "              onPress={() => {",
+              "                if (selectMode) {",
+              "                  onToggleSelect(index)",
+              "                } else {",
+              "                  onSwitchTrack(index)",
+              "                }",
+              "              }}",
               "            >",
               "              <View",
               "                style={{",
@@ -2570,11 +3152,25 @@ jobs:
               "                  flex: 1,",
               "                }}",
               "              >",
+              "                {selectMode && (",
+              "                  <View",
+              "                    style={{",
+              "                      width: 35,",
+              "                      alignItems: 'center',",
+              "                      justifyContent: 'center',",
+              "                      marginRight: 4,",
+              "                    }}",
+              "                  >",
+              "                    <UniversalCheckbox",
+              "                      status={isSelected ? 'checked' : 'unchecked'}",
+              "                    />",
+              "                  </View>",
+              "                )}",
               "                <View",
               "                  style={{",
               "                    paddingRight: 0,",
               "                    flex: 1,",
-              "                    marginLeft: 12,",
+              "                    marginLeft: selectMode ? 4 : 12,",
               "                    flexDirection: 'column',",
               "                  }}",
               "                >",
@@ -2605,23 +3201,241 @@ jobs:
               "TrackItem.displayName = 'TrackItem'"
             ].join("\n");
             queueModal = queueModal.replace(oldTrackItemRegex, newTrackItem);
-            const oldRemoveTrack = /const removeTrackHandler = useCallback\(async \(index: number\) => {[\s\S]*?}, \[\]\)/;
-            const newRemoveTrack = [
-              "const removeTrackHandler = useCallback(async (index: number) => {",
-              "    try {",
-              "      usePlayerQueueStore.setState((state) => ({",
-              "        tracks: state.tracks.filter((_, i) => i !== index),",
-              "      }))",
-              "      await Orpheus.removeTrack(index)",
-              "      await usePlayerQueueStore.getState().sync()",
-              "    } catch (error) {",
-              "      toastAndLogError('移除曲目失败', error, 'Player.Queue')",
-              "    }",
-              "  }, [])"
+
+            const oldClearQueueRegex = /const clearQueue = \(\) => \{[\s\S]*?dismissWithAction\(\(\) => \{[\s\S]*?alert\('清空播放队列'[\s\S]*?\}\)\s*\}/;
+            const newClearQueueAndSelection = [
+              "const clearQueueKeepPlaying = useAppStore(",
+              "		(state) => state.settings.clearQueueKeepPlaying ?? false,",
+              "	)",
+              "",
+              "	const [selectMode, setSelectMode] = useState(false)",
+              "	const [selectedIndices, setSelectedIndices] = useState<Set<number>>(() => new Set())",
+              "",
+              "	const toggleSelectIndex = useCallback((idx: number) => {",
+              "		setSelectedIndices((prev) => {",
+              "			const next = new Set(prev)",
+              "			if (next.has(idx)) {",
+              "				next.delete(idx)",
+              "				if (next.size === 0) setSelectMode(false)",
+              "			} else {",
+              "				next.add(idx)",
+              "			}",
+              "			return next",
+              "		})",
+              "	}, [])",
+              "",
+              "	const triggerSelectIndex = useCallback((idx: number) => {",
+              "		void Haptics.performHaptics(Haptics.AndroidHaptics.Long_Press)",
+              "		setSelectedIndices(new Set([idx]))",
+              "		setSelectMode(true)",
+              "	}, [])",
+              "",
+              "	const exitSelectMode = useCallback(() => {",
+              "		setSelectMode(false)",
+              "		setSelectedIndices(new Set())",
+              "	}, [])",
+              "",
+              "	const removeSelectedTracksHandler = useCallback(() => {",
+              "		if (selectedIndices.size === 0) return",
+              "		alert(",
+              "			'移除所选歌曲',",
+              "			`确定从播放列表中移除选中的 ${selectedIndices.size} 首歌曲吗？`,",
+              "			[",
+              "				{ text: '取消' },",
+              "				{",
+              "					text: '移除',",
+              "					onPress: async () => {",
+              "						setClearing(true)",
+              "						try {",
+              "							const sorted = Array.from(selectedIndices).sort((a, b) => b - a)",
+              "							for (const idx of sorted) {",
+              "								await Orpheus.removeTrack(idx)",
+              "							}",
+              "							await usePlayerQueueStore.getState().sync()",
+              "							exitSelectMode()",
+              "						} catch (e) {",
+              "							toastAndLogError('移除选中歌曲失败', e, 'Player.Queue')",
+              "						} finally {",
+              "							setClearing(false)",
+              "						}",
+              "					},",
+              "				},",
+              "			],",
+              "		)",
+              "	}, [selectedIndices, exitSelectMode])",
+              "",
+              "	const clearQueue = () => {",
+              "		dismissWithAction(() => {",
+              "			const title = '清空播放列表'",
+              "			const message = clearQueueKeepPlaying",
+              "				? '是否清空当前播放列表？'",
+              "				: '清空播放队列并停止播放？'",
+              "",
+              "			alert(title, message, [",
+              "				{ text: '取消' },",
+              "				{",
+              "					text: '清空',",
+              "					onPress: async () => {",
+              "						setClearing(true)",
+              "						try {",
+              "							if (clearQueueKeepPlaying) {",
+              "								const currentId = currentTrackId",
+              "								const currentIdx = queue.findIndex((t) => t.id === currentId)",
+              "								if (currentIdx !== -1) {",
+              "									for (let i = queue.length - 1; i >= 0; i--) {",
+              "										if (i !== currentIdx) {",
+              "											await Orpheus.removeTrack(i)",
+              "										}",
+              "									}",
+              "									await usePlayerQueueStore.getState().sync()",
+              "								} else {",
+              "									await clearPlaybackQueue()",
+              "								}",
+              "							} else {",
+              "								await clearPlaybackQueue()",
+              "							}",
+              "							exitSelectMode()",
+              "						} catch (error: unknown) {",
+              "							toastAndLogError('清空播放队列失败', error, 'Player.Queue')",
+              "						} finally {",
+              "							setClearing(false)",
+              "						}",
+              "					},",
+              "				},",
+              "			])",
+              "		})",
+              "	}"
             ].join("\n");
-            queueModal = queueModal.replace(oldRemoveTrack, newRemoveTrack);
+            queueModal = queueModal.replace(oldClearQueueRegex, newClearQueueAndSelection);
+
+            const oldRenderItemRegex = /const renderItem = useCallback\(\s*\(\{ item, index \}: \{ item: OrpheusTrack; index: number \}\) => \([\s\S]*?\[[\s\S]*?switchTrackHandler,[\s\S]*?drag,[\s\S]*?\],\s*\)/;
+            const newRenderItem = [
+              "const renderItem = useCallback(",
+              "		({ item, index }: { item: OrpheusTrack; index: number }) => (",
+              "			<TrackItem",
+              "				track={item}",
+              "				onSwitchTrack={switchTrackHandler}",
+              "				onRemoveTrack={removeTrackHandler}",
+              "				index={index}",
+              "				onDragStart={startDrag}",
+              "				onDragUpdate={updateDrag}",
+              "				onDragEnd={endDrag}",
+              "				isDragging={drag?.from === index}",
+              "				selectMode={selectMode}",
+              "				isSelected={selectedIndices.has(index)}",
+              "				onToggleSelect={toggleSelectIndex}",
+              "				onTriggerSelect={triggerSelectIndex}",
+              "			/>",
+              "		),",
+              "		[",
+              "			switchTrackHandler,",
+              "			removeTrackHandler,",
+              "			startDrag,",
+              "			updateDrag,",
+              "			endDrag,",
+              "			drag,",
+              "			selectMode,",
+              "			selectedIndices,",
+              "			toggleSelectIndex,",
+              "			triggerSelectIndex,",
+              "		],",
+              "	)"
+            ].join("\n");
+            queueModal = queueModal.replace(oldRenderItemRegex, newRenderItem);
+
+            const oldMenuActionsRegex = /const menuActions = useMenuActions\(\[\s*\{[\s\S]*?title: '反序剩余歌曲'[\s\S]*?attributes: \{ disabled: clearing \|\| queue\.length === 0 \},?\s*\}\,?\s*\]\)/;
+            const newMenuActions = [
+              "const menuActions = useMenuActions(",
+              "		selectMode",
+              "			? [",
+              "					{",
+              "						title: selectedIndices.size === queue.length ? '取消全选' : '全选',",
+              "						onPress: () => {",
+              "							if (selectedIndices.size === queue.length) {",
+              "								setSelectedIndices(new Set())",
+              "							} else {",
+              "								setSelectedIndices(new Set(queue.map((_, i) => i)))",
+              "							}",
+              "						},",
+              "					},",
+              "					{",
+              "						title: '退出多选',",
+              "						onPress: exitSelectMode,",
+              "					},",
+              "				]",
+              "			: [",
+              "					{",
+              "						title: '反序剩余歌曲',",
+              "						image: REVERSE_QUEUE_ICON,",
+              "						onPress: () => {",
+              "							void reverseRemainingQueueHandler()",
+              "						},",
+              "						attributes: {",
+              "							disabled:",
+              "								queue.length === 0 || currentIndex === -1 || shuffleMode !== false,",
+              "						},",
+              "					},",
+              "					{",
+              "						title: '保存为播放列表',",
+              "						image: SAVE_QUEUE_ICON,",
+              "						onPress: saveQueueToPlaylistHandler,",
+              "						attributes: { disabled: queue.length === 0 },",
+              "					},",
+              "					{",
+              "						title: '清空播放队列',",
+              "						image: CLEAR_QUEUE_ICON,",
+              "						onPress: clearQueue,",
+              "						attributes: { disabled: clearing || queue.length === 0 },",
+              "					},",
+              "				],",
+              "	)"
+            ].join("\n");
+            queueModal = queueModal.replace(oldMenuActionsRegex, newMenuActions);
+
+            queueModal = queueModal.replace(
+              'setDrag(null)\n\t\t\t\tusePlayerQueueSheetStore.getState().setOpen(false)',
+              'setDrag(null)\n\t\t\t\texitSelectMode()\n\t\t\t\tusePlayerQueueSheetStore.getState().setOpen(false)'
+            );
+
+            const oldHeaderTarget = "<Text variant='titleMedium'>播放队列 ({queue.length})</Text>\n\t\t\t\t\t\t<View style={{ flexDirection: 'row', alignItems: 'center' }}>\n\t\t\t\t\t\t\t<MenuView {...menuActions}>\n\t\t\t\t\t\t\t\t<IconButton\n\t\t\t\t\t\t\t\t\ticon='dots-vertical'\n\t\t\t\t\t\t\t\t\tdisabled={clearing}\n\t\t\t\t\t\t\t\t\tloading={clearing}\n\t\t\t\t\t\t\t\t\ttestID='player-queue-menu'\n\t\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t\t</MenuView>\n\t\t\t\t\t\t</View>";
+            const newHeaderReplacement = [
+              "{selectMode ? (",
+              "							<View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>",
+              "								<IconButton",
+              "									icon='close'",
+              "									size={20}",
+              "									onPress={exitSelectMode}",
+              "								/>",
+              "								<Text variant='titleMedium'>已选择 {selectedIndices.size} 项</Text>",
+              "							</View>",
+              "						) : (",
+              "							<Text variant='titleMedium'>播放队列 ({queue.length})</Text>",
+              "						)}",
+              "						<View style={{ flexDirection: 'row', alignItems: 'center' }}>",
+              "							{selectMode && (",
+              "								<IconButton",
+              "									icon='trash-can-outline'",
+              "									size={22}",
+              "									disabled={selectedIndices.size === 0 || clearing}",
+              "									loading={clearing}",
+              "									onPress={removeSelectedTracksHandler}",
+              "									testID='player-queue-batch-delete'",
+              "								/>",
+              "							)}",
+              "							<MenuView {...menuActions}>",
+              "								<IconButton",
+              "									icon='dots-vertical'",
+              "									disabled={clearing}",
+              "									loading={clearing}",
+              "									testID='player-queue-menu'",
+              "								/>",
+              "							</MenuView>",
+              "						</View>"
+            ].join("\n");
+            queueModal = queueModal.replace(oldHeaderTarget, newHeaderReplacement);
+
             fs.writeFileSync(queueModalPath, queueModal, "utf8");
-            console.log("✅ 已在 PlayerQueueModal.tsx 中修复删除按钮并实现 iOS 原生左滑删除曲目");
+            console.log("✅ 已在 PlayerQueueModal.tsx 中支持右滑触发多选、批量删除垃圾桶图标与清空播放列表保留歌曲");
           }
           // 21. 修复侧滑返回上一级界面时最左侧出现白边问题与开屏闪退：
           const rootLayoutPath = "apps/mobile/src/app/_layout.tsx";
@@ -2836,9 +3650,35 @@ jobs:
                 /scrollEnabled=\{\s*playbackContextStore\$\.context\.mode\.get\(\)\s*!==\s*'podcast'\s*\}/,
                 "scrollEnabled={\n\t\t\t\t\t\t\t\t\tplaybackContextStore$.context.mode.get() !== 'podcast' &&\n\t\t\t\t\t\t\t\t\t!playerSliderDragging$.get()\n\t\t\t\t\t\t\t\t}"
               );
-              fs.writeFileSync(playerPagePath, playerPage, "utf8");
-              console.log("✅ 已在 player.tsx 中为 AnimatedPagerView 绑定 !playerSliderDragging$.get() 互斥");
             }
+            if (!playerPage.includes("useNavigation")) {
+              playerPage = playerPage.replace(
+                "import { router, useIsFocused } from 'expo-router'",
+                "import { router, useIsFocused, useNavigation } from 'expo-router'"
+              );
+            }
+            if (!playerPage.includes("const navigation = useNavigation()")) {
+              playerPage = playerPage.replace(
+                "const isFocused = useIsFocused()",
+                "const isFocused = useIsFocused()\n\tconst navigation = useNavigation()"
+              );
+            }
+            if (!playerPage.includes("gestureEnabled: index === 0")) {
+              playerPage = playerPage.replace(
+                "const [index, setIndex] = useState(0)",
+                "const [index, setIndex] = useState(0)\n\n\tuseEffect(() => {\n\t\tnavigation.setOptions({\n\t\t\tgestureEnabled: index === 0,\n\t\t})\n\t}, [index, navigation])"
+              );
+            }
+            playerPage = playerPage.replace(
+              /const jumpTo = \(key: string\) => \{\s*const targetIndex =\s*key === 'lyrics' &&\s*playbackContextStore\$\.context\.mode\.peek\(\)\s*!==\s*'podcast'\s*\?\s*1\s*:\s*0\s*pagerRef\.current\?\.setPage\(targetIndex\)\s*\}/,
+              "const jumpTo = (key: string) => {\n\t\tconst targetIndex =\n\t\t\tkey === 'lyrics' &&\n\t\t\tplaybackContextStore$.context.mode.peek() !== 'podcast'\n\t\t\t\t? 1\n\t\t\t\t: 0\n\t\tsetIndex(targetIndex)\n\t\tpagerRef.current?.setPage(targetIndex)\n\t}"
+            );
+            playerPage = playerPage.replace(
+              /if\s*\(\s*index === 1\s*\)\s*\{\s*pagerRef\.current\?\.setPage\(0\)\s*return\s*\}/g,
+              "if (index === 1) {\n\t\t\tsetIndex(0)\n\t\t\tpagerRef.current?.setPage(0)\n\t\t\treturn\n\t\t}"
+            );
+            fs.writeFileSync(playerPagePath, playerPage, "utf8");
+            console.log("✅ 已在 player.tsx 中绑定 !playerSliderDragging$.get() 互斥，并写死歌词界面禁用返回手势回到主播放器");
           }
           try {
             const pagerPkgPath = require.resolve("react-native-pager-view/package.json", { paths: ["apps/mobile"] });
