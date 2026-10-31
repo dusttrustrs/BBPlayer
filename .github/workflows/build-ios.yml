@@ -2666,10 +2666,12 @@ jobs:
               );
             }
             if (!providersCode.includes("const themeColor = useAppStore((state) => state.settings.themeColor)")) {
-              providersCode = providersCode.replace(
-                "import { queryClient } from '@/lib/config/queryClient'",
-                "import { queryClient } from '@/lib/config/queryClient'\nimport useAppStore from '@/hooks/stores/useAppStore'"
-              );
+              if (!providersCode.includes("import useAppStore from '@/hooks/stores/useAppStore'")) {
+                providersCode = providersCode.replace(
+                  "import { queryClient } from '@/lib/config/queryClient'",
+                  "import { queryClient } from '@/lib/config/queryClient'\nimport useAppStore from '@/hooks/stores/useAppStore'"
+                );
+              }
               providersCode = providersCode.replace(
                 "const colorScheme = useColorScheme()",
                 "const colorScheme = useColorScheme()\n\tconst themeColor = useAppStore((state) => state.settings.themeColor)"
@@ -2680,13 +2682,13 @@ jobs:
               "buildMaterial3PaperColors(colorScheme, themeColor)"
             );
             providersCode = providersCode.replace(
-              "[colorScheme],",
-              "[colorScheme, themeColor],"
+              /\[colorScheme(?:,\s*pureWhiteBackground)?\],?/,
+              "[colorScheme, pureWhiteBackground, themeColor],"
             );
             if (
               !providersCode.includes("const themeColor = useAppStore((state) => state.settings.themeColor)") ||
               !providersCode.includes("buildMaterial3PaperColors(colorScheme, themeColor)") ||
-              !providersCode.includes("[colorScheme, themeColor]")
+              !providersCode.includes("themeColor]")
             ) {
               throw new Error("AppProviders 主题色联动补丁未能匹配上游源码");
             }
@@ -3860,7 +3862,7 @@ jobs:
           // 28. 修复音乐播放界面点击下载无响应、下载队列为空的问题：
           const orpheusDmPath = "packages/orpheus/ios/OrpheusDownloadManager.swift";
           if (fs.existsSync(orpheusDmPath)) {
-            let dmCode = fs.readFileSync(orpheusDmPath, "utf8");
+            let dmCode = fs.readFileSync(orpheusDmPath, "utf8").replace(/\r\n/g, "\n");
             if (dmCode.includes("func downloadTrack(track: Track)") && !dmCode.includes("fetchAndStartBilibiliDownload")) {
               const oldDmBlock = [
                 "    func downloadTrack(track: Track) {",
@@ -4702,6 +4704,37 @@ jobs:
               );
               fs.writeFileSync(appearancePagePath, appCode, "utf8");
               console.log("✅ 已在 appearance/index.tsx 中渲染主题色设置项");
+            }
+          }
+
+          // 补丁 about.tsx：在“项目主页”下方新增“iOS改版项目主页”
+          const aboutPagePath = "apps/mobile/src/app/settings/about.tsx";
+          if (fs.existsSync(aboutPagePath)) {
+            let aboutCode = fs.readFileSync(aboutPagePath, "utf8");
+            if (!aboutCode.includes("iOS改版项目主页")) {
+              const targetAnchor = "title='项目主页'";
+              const anchorIndex = aboutCode.indexOf(targetAnchor);
+              if (anchorIndex !== -1) {
+                const divIndex = aboutCode.indexOf("<Divider />", anchorIndex);
+                if (divIndex !== -1) {
+                  const insertPos = divIndex + "<Divider />".length;
+                  const injection = "\n\t\t\t\t\t<List.Item\n\t\t\t\t\t\ttitle='iOS改版项目主页'\n\t\t\t\t\t\tdescription='https://github.com/dusttrustrs/BBPlayer-iOS-Package'\n\t\t\t\t\t\tleft={(props) => (\n\t\t\t\t\t\t\t<List.Icon\n\t\t\t\t\t\t\t\t{...props}\n\t\t\t\t\t\t\t\ticon='github'\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t)}\n\t\t\t\t\t\tright={(props) => (\n\t\t\t\t\t\t\t<List.Icon\n\t\t\t\t\t\t\t\t{...props}\n\t\t\t\t\t\t\t\ticon='open-in-new'\n\t\t\t\t\t\t\t/>\n\t\t\t\t\t\t)}\n\t\t\t\t\t\tonPress={() =>\n\t\t\t\t\t\t\tvoid openExternalLink(\n\t\t\t\t\t\t\t\t'https://github.com/dusttrustrs/BBPlayer-iOS-Package',\n\t\t\t\t\t\t\t)\n\t\t\t\t\t\t}\n\t\t\t\t\t/>\n\t\t\t\t\t<Divider />";
+                  aboutCode = aboutCode.slice(0, insertPos) + injection + aboutCode.slice(insertPos);
+                  fs.writeFileSync(aboutPagePath, aboutCode, "utf8");
+                  console.log("✅ 已在 about.tsx 中添加 iOS改版项目主页 入口");
+                }
+              }
+            }
+          }
+
+          // 补丁 StarPromptModal.tsx：右上角给 GitHub 项目加收藏跳转至改版仓库
+          const starModalPath = "apps/mobile/src/components/modals/app/StarPromptModal.tsx";
+          if (fs.existsSync(starModalPath)) {
+            let starCode = fs.readFileSync(starModalPath, "utf8");
+            if (starCode.includes("https://github.com/bbplayer-app/BBPlayer")) {
+              starCode = starCode.replace("https://github.com/bbplayer-app/BBPlayer", "https://github.com/dusttrustrs/BBPlayer-iOS-Package");
+              fs.writeFileSync(starModalPath, starCode, "utf8");
+              console.log("✅ 已将 StarPromptModal 中的 GitHub 仓库地址更新为改版仓库");
             }
           }
           EOF
