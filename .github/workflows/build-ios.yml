@@ -4998,6 +4998,7 @@ jobs:
             let metro = fs.readFileSync(metroConfig, "utf8");
             if (metro.includes("resolve-workspace-root")) {
               metro = metro.replace("const { resolveWorkspaceRoot } = require('resolve-workspace-root');", [
+                "const fs = require('fs');",
                 "const resolveWorkspaceRoot = (start) => {",
                 "  let cur = start;",
                 "  while (cur && cur !== path.dirname(cur)) {",
