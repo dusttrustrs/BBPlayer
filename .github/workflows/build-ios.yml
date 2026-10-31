@@ -4747,8 +4747,8 @@ jobs:
             "",
             "export function NowPlayingWidgetLayout(props: NowPlayingProps): LiveActivityLayout {",
             "  'widget'",
-            "  const title = props.title || '正在播放'",
-            "  const artist = props.artist || 'BBPlayer'",
+            "  const title = (props && props.title) || '正在播放'",
+            "  const artist = (props && props.artist) || 'BBPlayer'",
             "  const titleText = (",
             "    <Text modifiers={[font({ weight: 'semibold', size: 15 }), foregroundStyle('#FFFFFF')]}>",
             "      {title}",
@@ -4801,6 +4801,10 @@ jobs:
             "  }",
             "}",
             "",
+            "if (typeof globalThis !== 'undefined') {",
+            "  (globalThis as any).__expoWidgetDefaultLayout = NowPlayingWidgetLayout",
+            "}",
+            "",
             "export const NowPlayingActivity = createLiveActivity<NowPlayingProps>('NowPlayingActivity', NowPlayingWidgetLayout)",
             "export default NowPlayingActivity",
             ""
@@ -4810,6 +4814,10 @@ jobs:
           const widgetsIndexSource = [
             "'widget'",
             "import { NowPlayingWidgetLayout, NowPlayingActivity } from '../src/features/live-activity/NowPlayingActivity'",
+            "",
+            "if (typeof globalThis !== 'undefined') {",
+            "  (globalThis as any).__expoWidgetDefaultLayout = NowPlayingWidgetLayout",
+            "}",
             "",
             "export default NowPlayingWidgetLayout",
             "export { NowPlayingActivity }",
@@ -4922,7 +4930,7 @@ jobs:
             }
           }
 
-          console.log("🔍 正在定位真实的 expo-widgets 物理安装目录并预构建 Bundle...");
+          console.log("🔍 正在定位真实的 expo-widgets 物理安装目录并注入容错运行时...");
 
           function findExpoWidgetsDir() {
             const check = (p) => {
@@ -4935,7 +4943,6 @@ jobs:
               return null;
             };
 
-            // 1. 尝试通过 Node 模块解析器精准解析
             for (const base of ["apps/mobile", "."]) {
               try {
                 const pkgJson = path.resolve(base, "package.json");
@@ -4948,7 +4955,6 @@ jobs:
               } catch (e) {}
             }
 
-            // 2. 检索 pnpm 虚拟存储库
             for (const root of [".", "apps/mobile"]) {
               const pnpmDir = path.resolve(root, "node_modules/.pnpm");
               if (fs.existsSync(pnpmDir)) {
@@ -4961,28 +4967,7 @@ jobs:
               }
             }
 
-            // 3. 递归兜底检索
-            function searchDeep(dir, depth = 0) {
-              if (depth > 5 || !fs.existsSync(dir)) return null;
-              for (const ent of fs.readdirSync(dir)) {
-                const full = path.join(dir, ent);
-                if (ent === "expo-widgets") {
-                  const hit = check(full);
-                  if (hit) return hit;
-                }
-                try {
-                  if (fs.statSync(full).isDirectory() && !full.includes(".git") && !full.includes("ios/build")) {
-                    if (ent === "node_modules" || ent === ".pnpm") {
-                      const hit = searchDeep(full, depth + 1);
-                      if (hit) return hit;
-                    }
-                  }
-                } catch (e) {}
-              }
-              return null;
-            }
-
-            return searchDeep(path.resolve("node_modules")) || searchDeep(path.resolve("apps/mobile/node_modules"));
+            return null;
           }
 
           const targetPkg = findExpoWidgetsDir();
@@ -4991,9 +4976,64 @@ jobs:
           }
           console.log("✅ 定位到有效的 expo-widgets 目录:", targetPkg);
 
-          const entryFile = path.join(targetPkg, "bundle/index.ts");
-          const metroConfig = path.join(targetPkg, "metro.config.js");
+          // 1. 深度治理：在 bundle/index.ts 内部直接编译固化 defaultNowPlayingLayout，彻底杜绝 App Group 与 Babel 别名失效问题
+          const bundleEntryTs = path.join(targetPkg, "bundle/index.ts");
+          if (fs.existsSync(bundleEntryTs)) {
+            let bundleIndex = fs.readFileSync(bundleEntryTs, "utf8");
+            if (!bundleIndex.includes("__expoWidgetDefaultLayout")) {
+              const embeddedLayout = [
+                "",
+                "// --- BBPlayer Builtin Robust Live Activity Layout ---",
+                "function defaultNowPlayingLayout(props: any) {",
+                "  var title = (props && props.title) || '正在播放';",
+                "  var artist = (props && props.artist) || 'BBPlayer';",
+                "  var titleText = (React as any).createElement(swiftUI.Text, {",
+                "    modifiers: [(modifiers as any).font({ weight: 'semibold', size: 15 }), (modifiers as any).foregroundStyle('#FFFFFF')]",
+                "  }, title);",
+                "  var artistText = (React as any).createElement(swiftUI.Text, {",
+                "    modifiers: [(modifiers as any).font({ size: 13 }), (modifiers as any).foregroundStyle('#D1D1D6')]",
+                "  }, artist);",
+                "  var banner = (React as any).createElement(swiftUI.HStack, {",
+                "    spacing: 12,",
+                "    modifiers: [",
+                "      (modifiers as any).padding({ horizontal: 16, vertical: 14 }),",
+                "      (modifiers as any).activityBackgroundTint('#1C1C1E'),",
+                "      (modifiers as any).widgetURL('bbplayer://')",
+                "    ]",
+                "  },",
+                "    (React as any).createElement(swiftUI.Image, { systemName: 'music.note', color: '#FB7299' }),",
+                "    (React as any).createElement(swiftUI.VStack, { alignment: 'leading', spacing: 3 }, titleText, artistText),",
+                "    (React as any).createElement(swiftUI.HStack, { spacing: 8, modifiers: [(modifiers as any).padding({ leading: 8 })] },",
+                "      (React as any).createElement(swiftUI.Image, { systemName: 'waveform', color: '#FB7299' })",
+                "    )",
+                "  );",
+                "  return {",
+                "    banner: banner,",
+                "    bannerSmall: banner,",
+                "    compactLeading: (React as any).createElement(swiftUI.Image, { systemName: 'music.note', color: '#FB7299' }),",
+                "    compactTrailing: (React as any).createElement(swiftUI.Image, { systemName: 'waveform', color: '#FB7299' }),",
+                "    minimal: (React as any).createElement(swiftUI.Image, { systemName: 'music.note', color: '#FB7299' }),",
+                "    expandedLeading: (React as any).createElement(swiftUI.Image, { systemName: 'music.note', color: '#FB7299' }),",
+                "    expandedCenter: (React as any).createElement(swiftUI.VStack, { alignment: 'leading', spacing: 3 }, titleText, artistText),",
+                "    expandedTrailing: (React as any).createElement(swiftUI.Image, { systemName: 'waveform', color: '#FB7299' }),",
+                "    expandedBottom: (React as any).createElement(swiftUI.HStack, {",
+                "      modifiers: [(modifiers as any).padding({ horizontal: 12, vertical: 4 })]",
+                "    }, (React as any).createElement(swiftUI.Text, {",
+                "      modifiers: [(modifiers as any).font({ size: 12 }), (modifiers as any).foregroundStyle('#8E8E93')]",
+                "    }, 'BBPlayer 正在播放'))",
+                "  };",
+                "}",
+                "(globalThis as any).__expoWidgetDefaultLayout = defaultNowPlayingLayout;",
+                ""
+              ].join("\n");
+              bundleIndex += embeddedLayout;
+              fs.writeFileSync(bundleEntryTs, bundleIndex, "utf8");
+              console.log("✅ 已向 bundle/index.ts 注入固化默认布局 defaultNowPlayingLayout");
+            }
+          }
 
+          // 2. 补丁 metro.config.js
+          const metroConfig = path.join(targetPkg, "metro.config.js");
           if (fs.existsSync(metroConfig)) {
             let metro = fs.readFileSync(metroConfig, "utf8");
             if (metro.includes("resolve-workspace-root")) {
@@ -5009,25 +5049,87 @@ jobs:
                 "};"
               ].join("\n"));
               fs.writeFileSync(metroConfig, metro, "utf8");
-              console.log("✅ 已为 metro.config.js 注入内置工作区解析器 (消除 devDependencies 缺失)");
+              console.log("✅ 已为 metro.config.js 注入内置工作区解析器");
             }
           }
 
+          // 3. 补丁 ExpoWidgets.podspec
           const podspec = path.join(targetPkg, "ios/ExpoWidgets.podspec");
           if (fs.existsSync(podspec)) {
             let p = fs.readFileSync(podspec, "utf8");
             p = p.split('cp "${source}" "${dest}"').join('cp -R "${source}" "${dest}"');
             fs.writeFileSync(podspec, p, "utf8");
-            console.log("✅ 已修复 ExpoWidgets.podspec 资源拷贝指令支持目录 (-R)");
+            console.log("✅ 已修复 ExpoWidgets.podspec 拷贝指令");
           }
 
+          // 4. 补丁 WidgetsStorage.swift：杜绝签名环境 App Group 缺失导致 defaults 为 nil
+          const storageSwift = path.join(targetPkg, "ios/WidgetsStorage.swift");
+          if (fs.existsSync(storageSwift)) {
+            let sw = fs.readFileSync(storageSwift, "utf8");
+            sw = sw.replace(
+              "static let defaults = UserDefaults(suiteName: appGroupIdentifier)",
+              "static let defaults: UserDefaults? = (appGroupIdentifier != nil ? UserDefaults(suiteName: appGroupIdentifier) : nil) ?? UserDefaults.standard"
+            );
+            fs.writeFileSync(storageSwift, sw, "utf8");
+            console.log("✅ 已为 WidgetsStorage.swift 添加 UserDefaults.standard 兜底保护");
+          }
+
+          // 5. 补丁 Utils.swift：若 App Group 传输布局为空则自动回退到 bundle 内置默认布局
+          const utilsSwift = path.join(targetPkg, "ios/Widgets/Utils.swift");
+          if (fs.existsSync(utilsSwift)) {
+            let ut = fs.readFileSync(utilsSwift, "utf8");
+            ut = ut.replace(
+              'let layout = WidgetsStorage.getString(forKey: "__expo_widgets_live_activity_\\(name)_layout") ?? ""',
+              'var layout = WidgetsStorage.getString(forKey: "__expo_widgets_live_activity_\\(name)_layout") ?? ""\n  if layout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { layout = "globalThis.__expoWidgetDefaultLayout" }'
+            );
+            fs.writeFileSync(utilsSwift, ut, "utf8");
+            console.log("✅ 已为 Utils.swift 添加内置默认布局回退支持");
+          }
+
+          // 6. 补丁 LiveActivityBanner.swift：兼容 iOS 18 槽位互相兜底
+          const bannerSwift = path.join(targetPkg, "ios/Widgets/LiveActivityBanner.swift");
+          if (fs.existsSync(bannerSwift)) {
+            let bn = fs.readFileSync(bannerSwift, "utf8");
+            bn = bn.replace('nodes?["bannerSmall"] as? [String: Any]', '(nodes?["bannerSmall"] ?? nodes?["banner"]) as? [String: Any]');
+            bn = bn.replace('nodes?["banner"] as? [String: Any]', '(nodes?["banner"] ?? nodes?["bannerSmall"]) as? [String: Any]');
+            fs.writeFileSync(bannerSwift, bn, "utf8");
+            console.log("✅ 已为 LiveActivityBanner.swift 添加 banner / bannerSmall 双向兜底");
+          }
+
+          // 7. 补丁 WidgetLiveActivity.swift：展开区域 fallback 到 banner 杜绝全黑
+          const actSwift = path.join(targetPkg, "ios/Widgets/WidgetLiveActivity.swift");
+          if (fs.existsSync(actSwift)) {
+            let act = fs.readFileSync(actSwift, "utf8");
+            const oldSec = `    if let node = nodes[sectionName] as? [String: Any] {\n      WidgetsDynamicView(name: context.activityID, kind: .liveActivity, node: node)\n    } else {\n      EmptyView()\n    }`;
+            const newSec = `    if let node = nodes[sectionName] as? [String: Any] {\n      WidgetsDynamicView(name: context.activityID, kind: .liveActivity, node: node)\n    } else if sectionName == "expandedCenter", let fb = (nodes["banner"] ?? nodes["bannerSmall"]) as? [String: Any] {\n      WidgetsDynamicView(name: context.activityID, kind: .liveActivity, node: fb)\n    } else {\n      EmptyView()\n    }`;
+            if (act.includes(oldSec)) {
+              act = act.replace(oldSec, newSec);
+              fs.writeFileSync(actSwift, act, "utf8");
+              console.log("✅ 已为 WidgetLiveActivity.swift 注入展开视图兜底 (杜绝灵动岛全黑)");
+            }
+          }
+
+          // 8. 补丁 WidgetsJSRuntime.swift：注入 Babel 别名环境变量，并在 JS 出错时自动重试默认布局
+          const runtimeSwift = path.join(targetPkg, "ios/Widgets/WidgetsJSRuntime.swift");
+          if (fs.existsSync(runtimeSwift)) {
+            let rt = fs.readFileSync(runtimeSwift, "utf8");
+            const oldCall = `    guard let layoutValue = getLayoutValue(layout, in: context) else {\n      return .failure(WidgetJavaScriptError(message: contextExceptionMessage(context) ?? "Could not evaluate layout."))\n    }\n\n    context.exception = nil\n    context.setObject(layoutValue, forKeyedSubscript: "__expoWidgetLayout" as NSString)\n\n    let function = context.objectForKeyedSubscript(functionName)\n    guard let function, function.isObject else {\n      return .failure(WidgetJavaScriptError(message: "Expo widget runtime function \\(functionName) is unavailable."))\n    }\n\n    let result = function.call(withArguments: arguments)\n    if let exceptionMessage = contextExceptionMessage(context) {\n      return .failure(WidgetJavaScriptError(message: exceptionMessage))\n    }\n    return .success(result)`;
+            const newCall = `    context.evaluateScript("""\n    if (typeof _jsxRuntime === 'undefined') { var _jsxRuntime = { jsx: globalThis.jsx || globalThis._jsx, jsxs: globalThis.jsxs || globalThis._jsxs }; }\n    if (typeof _swiftUi === 'undefined') { var _swiftUi = globalThis; }\n    if (typeof _modifiers === 'undefined') { var _modifiers = globalThis; }\n    if (typeof _react === 'undefined') { var _react = globalThis.React; }\n    """)\n\n    var targetLayout = layout\n    if targetLayout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {\n      targetLayout = "globalThis.__expoWidgetDefaultLayout"\n    }\n\n    var layoutVal = getLayoutValue(targetLayout, in: context)\n    if layoutVal == nil {\n      layoutVal = getLayoutValue("globalThis.__expoWidgetDefaultLayout", in: context)\n    }\n\n    guard let finalLayout = layoutVal else {\n      return .failure(WidgetJavaScriptError(message: contextExceptionMessage(context) ?? "Could not evaluate layout."))\n    }\n\n    context.exception = nil\n    context.setObject(finalLayout, forKeyedSubscript: "__expoWidgetLayout" as NSString)\n\n    let function = context.objectForKeyedSubscript(functionName)\n    guard let function, function.isObject else {\n      return .failure(WidgetJavaScriptError(message: "Expo widget runtime function \\(functionName) is unavailable."))\n    }\n\n    var result = function.call(withArguments: arguments)\n    if let exceptionMessage = contextExceptionMessage(context) {\n      context.exception = nil\n      if let fallback = getLayoutValue("globalThis.__expoWidgetDefaultLayout", in: context) {\n        context.setObject(fallback, forKeyedSubscript: "__expoWidgetLayout" as NSString)\n        result = function.call(withArguments: arguments)\n        if context.exception == nil {\n          return .success(result)\n        }\n      }\n      return .failure(WidgetJavaScriptError(message: exceptionMessage))\n    }\n    return .success(result)`;
+            if (rt.includes(oldCall)) {
+              rt = rt.replace(oldCall, newCall);
+              fs.writeFileSync(runtimeSwift, rt, "utf8");
+              console.log("✅ 已为 WidgetsJSRuntime.swift 注入全局兼容别名与重试机制");
+            }
+          }
+
+          // 9. 编译独立 Bundle
           const projectRoot = path.resolve("apps/mobile");
+          const entryFile = path.join(targetPkg, "bundle/index.ts");
           const generatedBundle = path.join(targetPkg, "bundle/build/ExpoWidgets.bundle");
           fs.mkdirSync(path.dirname(generatedBundle), { recursive: true });
 
           console.log("🚀 使用 Expo CLI 独立执行 export:embed 构建 ExpoWidgets.bundle...");
           console.log("  -> 入口文件:", entryFile);
-          console.log("  -> 配置文件:", metroConfig);
           console.log("  -> 输出目标:", generatedBundle);
 
           const runBuild = spawnSync("npx", [
