@@ -4922,74 +4922,81 @@ jobs:
             }
           }
 
-          console.log("🔍 正在预构建 ExpoWidgets.bundle (彻底解决 Issue #43646)...");
+          console.log("🔍 正在定位真实的 expo-widgets 物理安装目录并预构建 Bundle...");
 
-          function findExpoWidgetsDirs(startDir, results = []) {
-            if (!fs.existsSync(startDir)) return results;
-            for (const item of fs.readdirSync(startDir)) {
-              const full = path.join(startDir, item);
+          function findExpoWidgetsDir() {
+            const check = (p) => {
               try {
-                if (item === "expo-widgets" && fs.existsSync(path.join(full, "package.json"))) {
-                  results.push(full);
-                } else if (fs.statSync(full).isDirectory() && !full.includes(".git") && !full.includes("ios/build")) {
-                  if (item === "node_modules" || item === ".pnpm" || item === "apps") {
-                    findExpoWidgetsDirs(full, results);
-                  }
+                if (fs.existsSync(p)) {
+                  const real = fs.realpathSync(p);
+                  if (fs.existsSync(path.join(real, "bundle/index.ts"))) return real;
+                }
+              } catch (e) {}
+              return null;
+            };
+
+            // 1. 尝试通过 Node 模块解析器精准解析
+            for (const base of ["apps/mobile", "."]) {
+              try {
+                const pkgJson = path.resolve(base, "package.json");
+                if (fs.existsSync(pkgJson)) {
+                  const req = require("module").createRequire(pkgJson);
+                  const resolved = path.dirname(req.resolve("expo-widgets/package.json"));
+                  const hit = check(resolved);
+                  if (hit) return hit;
                 }
               } catch (e) {}
             }
-            return results;
-          }
 
-          const expoWidgetsDirs = findExpoWidgetsDirs("node_modules");
-          if (fs.existsSync("apps/mobile/node_modules")) {
-            findExpoWidgetsDirs("apps/mobile/node_modules", expoWidgetsDirs);
-          }
-          console.log(`找到 ${expoWidgetsDirs.length} 个 expo-widgets 路径`);
-
-          for (const pkgDir of expoWidgetsDirs) {
-            const buildMjs = path.join(pkgDir, "scripts/build-bundle.mjs");
-            if (fs.existsSync(buildMjs)) {
-              let mjs = fs.readFileSync(buildMjs, "utf8");
-              mjs = mjs.replace("import spawn from '@expo/spawn-async';", "import { spawnSync } from 'node:child_process';");
-              const mjsPattern = /const result = await spawn[\s\S]*?if \(result\.error\) \{[\s\S]*?\}/;
-              if (mjsPattern.test(mjs)) {
-                mjs = mjs.replace(mjsPattern, [
-                  "const { createRequire } = await import('node:module');",
-                  "const projRequire = createRequire(path.join(projectRoot, 'package.json'));",
-                  "let expoCli;",
-                  "try { expoCli = projRequire.resolve('expo/bin/cli'); } catch { expoCli = require.resolve('expo/bin/cli'); }",
-                  "console.log('⚡ 使用 Expo CLI 独立导出 Widget 运行时:', expoCli);",
-                  "const res = spawnSync(nodePath, [",
-                  "  expoCli,",
-                  "  'export:embed',",
-                  "  '--platform',",
-                  "  'ios',",
-                  "  '--bundle-output',",
-                  "  appBundlePath,",
-                  "  '--entry-file',",
-                  "  path.join(__dirname, '../bundle/index.ts'),",
-                  "  '--dev',",
-                  "  'false',",
-                  "  '--skip-server'",
-                  "], {",
-                  "  stdio: 'inherit',",
-                  "  cwd: projectRoot,",
-                  "  env: {",
-                  "    ...process.env,",
-                  "    EXPO_OVERRIDE_METRO_CONFIG: path.join(__dirname, '../metro.config.js'),",
-                  "  }",
-                  "});",
-                  "if (res.status !== 0) throw new Error('expo export:embed 退出码非零: ' + res.status);"
-                ].join("\n"));
-                fs.writeFileSync(buildMjs, mjs, "utf8");
-                console.log("✅ 已修复 build-bundle.mjs:", buildMjs);
+            // 2. 检索 pnpm 虚拟存储库
+            for (const root of [".", "apps/mobile"]) {
+              const pnpmDir = path.resolve(root, "node_modules/.pnpm");
+              if (fs.existsSync(pnpmDir)) {
+                for (const ent of fs.readdirSync(pnpmDir)) {
+                  if (ent.startsWith("expo-widgets@")) {
+                    const hit = check(path.join(pnpmDir, ent, "node_modules/expo-widgets"));
+                    if (hit) return hit;
+                  }
+                }
               }
             }
 
-            const metroCfg = path.join(pkgDir, "metro.config.js");
-            if (fs.existsSync(metroCfg)) {
-              let metro = fs.readFileSync(metroCfg, "utf8");
+            // 3. 递归兜底检索
+            function searchDeep(dir, depth = 0) {
+              if (depth > 5 || !fs.existsSync(dir)) return null;
+              for (const ent of fs.readdirSync(dir)) {
+                const full = path.join(dir, ent);
+                if (ent === "expo-widgets") {
+                  const hit = check(full);
+                  if (hit) return hit;
+                }
+                try {
+                  if (fs.statSync(full).isDirectory() && !full.includes(".git") && !full.includes("ios/build")) {
+                    if (ent === "node_modules" || ent === ".pnpm") {
+                      const hit = searchDeep(full, depth + 1);
+                      if (hit) return hit;
+                    }
+                  }
+                } catch (e) {}
+              }
+              return null;
+            }
+
+            return searchDeep(path.resolve("node_modules")) || searchDeep(path.resolve("apps/mobile/node_modules"));
+          }
+
+          const targetPkg = findExpoWidgetsDir();
+          if (!targetPkg) {
+            throw new Error("❌ 未能定位到包含 bundle/index.ts 的 expo-widgets 真实安装目录");
+          }
+          console.log("✅ 定位到有效的 expo-widgets 目录:", targetPkg);
+
+          const entryFile = path.join(targetPkg, "bundle/index.ts");
+          const metroConfig = path.join(targetPkg, "metro.config.js");
+
+          if (fs.existsSync(metroConfig)) {
+            let metro = fs.readFileSync(metroConfig, "utf8");
+            if (metro.includes("resolve-workspace-root")) {
               metro = metro.replace("const { resolveWorkspaceRoot } = require('resolve-workspace-root');", [
                 "const resolveWorkspaceRoot = (start) => {",
                 "  let cur = start;",
@@ -5000,36 +5007,54 @@ jobs:
                 "  return start;",
                 "};"
               ].join("\n"));
-              fs.writeFileSync(metroCfg, metro, "utf8");
-              console.log("✅ 已修复 metro.config.js:", metroCfg);
-            }
-
-            const podspec = path.join(pkgDir, "ios/ExpoWidgets.podspec");
-            if (fs.existsSync(podspec)) {
-              let p = fs.readFileSync(podspec, "utf8");
-              p = p.split('cp "${source}" "${dest}"').join('cp -R "${source}" "${dest}"');
-              fs.writeFileSync(podspec, p, "utf8");
-              console.log("✅ 已修复 ExpoWidgets.podspec 拷贝指令");
+              fs.writeFileSync(metroConfig, metro, "utf8");
+              console.log("✅ 已为 metro.config.js 注入内置工作区解析器 (消除 devDependencies 缺失)");
             }
           }
 
-          const targetPkg = expoWidgetsDirs[0];
-          if (!targetPkg) throw new Error("未找到 expo-widgets 安装路径");
+          const podspec = path.join(targetPkg, "ios/ExpoWidgets.podspec");
+          if (fs.existsSync(podspec)) {
+            let p = fs.readFileSync(podspec, "utf8");
+            p = p.split('cp "${source}" "${dest}"').join('cp -R "${source}" "${dest}"');
+            fs.writeFileSync(podspec, p, "utf8");
+            console.log("✅ 已修复 ExpoWidgets.podspec 资源拷贝指令支持目录 (-R)");
+          }
 
           const projectRoot = path.resolve("apps/mobile");
-          const bundleScript = path.join(targetPkg, "scripts/build-bundle.mjs");
-          console.log("🚀 开始预构建 ExpoWidgets.bundle (projectRoot:", projectRoot, ")...");
-          const runBuild = spawnSync("node", [bundleScript, projectRoot], {
+          const generatedBundle = path.join(targetPkg, "bundle/build/ExpoWidgets.bundle");
+          fs.mkdirSync(path.dirname(generatedBundle), { recursive: true });
+
+          console.log("🚀 使用 Expo CLI 独立执行 export:embed 构建 ExpoWidgets.bundle...");
+          console.log("  -> 入口文件:", entryFile);
+          console.log("  -> 配置文件:", metroConfig);
+          console.log("  -> 输出目标:", generatedBundle);
+
+          const runBuild = spawnSync("npx", [
+            "expo",
+            "export:embed",
+            "--platform",
+            "ios",
+            "--bundle-output",
+            generatedBundle,
+            "--entry-file",
+            entryFile,
+            "--dev",
+            "false",
+            "--skip-server"
+          ], {
             stdio: "inherit",
             cwd: projectRoot,
-            env: process.env,
+            env: {
+              ...process.env,
+              EXPO_OVERRIDE_METRO_CONFIG: metroConfig,
+            },
+            shell: true,
           });
 
           if (runBuild.status !== 0) {
-            throw new Error("ExpoWidgets.bundle 预构建失败，退出码: " + runBuild.status);
+            throw new Error("ExpoWidgets.bundle export:embed 构建失败，退出码: " + runBuild.status);
           }
 
-          const generatedBundle = path.join(targetPkg, "bundle/build/ExpoWidgets.bundle");
           if (!fs.existsSync(generatedBundle) || fs.statSync(generatedBundle).size < 1000) {
             throw new Error("预构建完成但产物文件不存在或过小: " + generatedBundle);
           }
@@ -5047,7 +5072,7 @@ jobs:
           createStructuredBundle(path.resolve("apps/mobile/ios/ExpoWidgets.bundle"));
           createStructuredBundle(path.resolve("apps/mobile/ios/ExpoWidgetsTarget/ExpoWidgets.bundle"));
           createStructuredBundle(path.join(targetPkg, "bundle/build/ExpoWidgets.bundle_dir"));
-          console.log("✅ 已成功组装双层 Bundle 结构并就绪");
+          console.log("✅ 已成功组装符合 Swift WidgetsJSRuntime 标准的双层 Bundle 目录结构并就绪");
           EOF
       - name: 📱 生成 iOS 原生工程 (Expo Prebuild)
         run: |
