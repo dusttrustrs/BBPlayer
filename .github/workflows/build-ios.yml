@@ -2658,16 +2658,20 @@ jobs:
                 "name='(tabs)'\n\t\t\t\t\t\t\toptions={{\n\t\t\t\t\t\t\t\theaderShown: false,\n\t\t\t\t\t\t\t\tcontentStyle: { backgroundColor: appBg },\n\t\t\t\t\t\t\t}}"
               );
             }
-            if (!layoutCode.includes("HIDDEN_SEGMENT_ROOTS.has(routeNameToSegmentRoot(route.name)))")) {
+            if (!layoutCode.includes("HIDDEN_SEGMENT_ROOTS")) {
+              layoutCode = layoutCode.replace(
+                "nowPlayingBarStore$,",
+                "HIDDEN_SEGMENT_ROOTS,\n\tnowPlayingBarStore$,"
+              );
+            }
+            if (!layoutCode.includes("nowPlayingBarStore$.hiddenScreenActive.set(shouldHideNowPlayingBar(route.name))")) {
               layoutCode = layoutCode.replace(
                 /focus:\s*\(\)\s*=>\s*\{[\s\S]*?nowPlayingBarStore\$\.hiddenScreenActive\.set\(true\)\s*\}\s*\}/,
                 [
                   "focus: () => {",
                   "  if (route.name !== 'modal') {",
                   "    nowPlayingBarStore$.hiddenScreenActive.set(",
-                  "      HIDDEN_SEGMENT_ROOTS.has(",
-                  "        routeNameToSegmentRoot(route.name),",
-                  "      ),",
+                  "      shouldHideNowPlayingBar(route.name),",
                   "    )",
                   "  }",
                   "  if (route.name !== '(tabs)' && route.name !== 'modal') {",
@@ -4463,7 +4467,7 @@ jobs:
                   "  const shouldShow =",
                   "    currentTrack !== null &&",
                   "    !hiddenScreenActive &&",
-                  "    !HIDDEN_SEGMENT_ROOTS.has(segments[0] ?? '')",
+                  "    !shouldHideNowPlayingBar(segments[0] ?? '')",
                   "",
                   "  return <NowPlayingBarContent shouldShow={shouldShow} />",
                   "}"
